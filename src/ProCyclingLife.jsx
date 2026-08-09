@@ -130,7 +130,7 @@ const SKILL_TREE_CONFIG = {
       label: "Tactique", icon: "🧭",
       desc: "La lecture de course — débloque de nouvelles décisions en pleine course.",
       skills: [
-        { id: "tact_placement", label: "Placement", desc: "Réduit la fatigue dans les moments de bataille pour la position", cost: 1, tier: 1, effects: [{ type: "fatigueResist", value: 3 }] },
+        { id: "tact_placement", label: "Placement", desc: "Réduit la fatigue dans les moments de bataille pour la position — et réduit aussi ton risque de chute, en descente comme sur les pavés", cost: 1, tier: 1, effects: [{ type: "fatigueResist", value: 3 }] },
         { id: "tact_lecture", label: "Lecture de course", desc: "Débloque le choix « Contre-attaquer » en cours de course", cost: 2, tier: 1, effects: [{ type: "unlockChoice", key: "contre_attaquer" }] },
         { id: "tact_vision", label: "Vision", desc: "Débloque « Suivre uniquement le rival » et « Demander un relais à un équipier »", cost: 4, tier: 2, effects: [{ type: "unlockChoice", key: "suivre_rival" }, { type: "unlockChoice", key: "demander_relais" }] },
         { id: "tact_effort", label: "Gestion de l'effort", desc: "Réduit largement la fatigue accumulée en course", cost: 1, tier: 1, effects: [{ type: "fatigueResist", value: 5 }] },
@@ -158,7 +158,7 @@ const SKILL_TREE_CONFIG = {
     grimpeur: [
       { id: "spec_g_attaque", label: "Attaque explosive", desc: "+10 en montagne", cost: 1, tier: 1, effects: [{ type: "specialtyBonus", key: "montagne", value: 10 }] },
       { id: "spec_g_altitude", label: "Haute altitude", desc: "Réduit la fatigue dans les arrivées au sommet", cost: 1, tier: 1, effects: [{ type: "fatigueResist", value: 4 }] },
-      { id: "spec_g_descendeur", label: "Descendeur", desc: "Talent unique : bonus de performance dans les étapes de montagne des grands tours", cost: 1, tier: 1, unique: true, effects: [{ type: "contextBonus", context: "montagne_stage", value: 8 }] },
+      { id: "spec_g_descendeur", label: "Descendeur", desc: "Talent unique : bonus de performance dans les étapes de montagne des grands tours, et réduit ton risque de chute en descente", cost: 1, tier: 1, unique: true, effects: [{ type: "contextBonus", context: "montagne_stage", value: 8 }] },
       { id: "spec_g_ascensions", label: "Longues ascensions", desc: "Débloque la décision « Attendre le dernier col » — gérer patiemment jusqu'à l'ascension finale plutôt qu'un simple bonus de stat", cost: 2, tier: 2, effects: [{ type: "unlockChoice", key: "attendre_dernier_col" }] },
       { id: "spec_g_cols", label: "Gestion des cols", desc: "Réduit encore la fatigue en montagne", cost: 2, tier: 2, effects: [{ type: "fatigueResist", value: 4 }] },
     ],
@@ -1469,6 +1469,12 @@ function applyDelta(game, delta = {}) {
     delta.palmares.forEach((label) => {
       player.palmares.push({ label, age: player.age });
       player.history.push(`${player.age} ans — ${label}`);
+      // Prime de victoire négociée au contrat : ne paie que sur une vraie victoire, proportionnelle au multiplicateur négocié au mercato.
+      if (/^(Victoire|Classement général)/.test(label) && player.contract?.winBonusMultiplier > 1) {
+        const bonus = Math.round(4000 * (player.contract.winBonusMultiplier - 1));
+        player.money = (player.money || 0) + bonus;
+        player.history.push(`${player.age} ans — touche une prime de victoire contractuelle de ${bonus.toLocaleString("fr-FR")} €.`);
+      }
     });
   }
   if (delta.resultTier) {
@@ -1497,7 +1503,16 @@ function applyDelta(game, delta = {}) {
     if (history.length > 0) history[history.length - 1] = { ...history[history.length - 1], toAge: player.age };
     player.teamsHistory = [...history, { name: delta.teamUpgrade.name, level: delta.teamUpgrade.level, fromAge: player.age }];
   }
+  // Contrat négocié au mercato : durée (verrouille f2 tant qu'elle court), prime de victoire, clause de sortie.
+  if (delta.contract) { player.contract = delta.contract; }
   if (delta.uciPoints) { player.uciPoints = (player.uciPoints || 0) + delta.uciPoints; }
+  // Chute grave forçant la fin de course : plutôt que de restructurer le déroulé des étapes, on force
+  // directement le groupe au plancher (décroché) et l'énergie au minimum — le Race Engine V2 garantit
+  // alors mécaniquement un résultat anonyme, sans avoir besoin d'interrompre la séquence de la course.
+  if (delta.forceDropped) {
+    raceState.group = RACE_GROUPS.DROPPED;
+    raceState.energy = 5;
+  }
   if (delta.tacticalBonus) {
     tacticalBonus += delta.tacticalBonus;
     // Race Engine V2 : toute action coûte de l'énergie, et une action significative tente de faire
@@ -1725,11 +1740,16 @@ const EVENTS = [
     ] },
 
   /* ---- FIN DE SAISON ---- */
-  { id: "f2", block: "fin", text: "Fin août : ton contrat arrive à échéance. Le mercato cycliste s'ouvre.",
+  { id: "f2", block: "fin",
+    // Tant qu'un contrat pluriannuel court encore, le mercato ne s'ouvre pas pour toi cette saison-là —
+    // une vraie signature de plusieurs saisons doit se ressentir comme un engagement, pas une formalité.
+    condition: (g) => !(g.player.contract && g.player.contract.yearsRemaining > 0),
+    text: "Fin août : ton contrat arrive à échéance. Le mercato cycliste s'ouvre.",
     choices: (g) => {
       const level = g.player.team.level;
       const base = [
-        { label: "Négocier une prolongation dans ton équipe actuelle", resolve: () => ({ text: "La continuité rassure le staff, sans forcément faire progresser ton salaire.", delta: { relationEquipe: 6 } }) },
+        { label: "Prolonger dans ton équipe actuelle, sans clause particulière", resolve: () => ({ text: "La continuité rassure le staff, sans forcément faire progresser ton salaire.", delta: { relationEquipe: 6, contract: { teamId: g.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: false } } }) },
+        { label: "Rester, mais négocier une clause de sortie facilitée", resolve: () => ({ text: "Tu acceptes de rester, mais t'assures de pouvoir partir plus facilement si une meilleure occasion se présente.", delta: { relationEquipe: 2, contract: { teamId: g.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: true } } }) },
       ];
       // Le niveau EFFECTIF d'une équipe (après une éventuelle promotion/relégation en cours de saison)
       // peut différer de son niveau de création — on recalcule donc les pools à la volée.
@@ -1741,8 +1761,9 @@ const EVENTS = [
         const bigTeam = pick(upgradePool);
         const modestPool = teamsAtLevel(level).filter((t) => t.id !== g.player.team.id);
         const modestTeam = modestPool.length > 0 ? pick(modestPool) : g.player.team;
-        base.push({ label: `Offre A — ${bigTeam.name} (${upgradeLabel}), rôle d'équipier`, resolve: () => ({ text: `${bigTeam.name} te veut dans son effectif, mais en tant qu'équipier au service de leaders déjà installés. Le tremplin idéal vers les Grands Tours — sans garantie de résultats personnels.`, delta: { reputation: 4, teamUpgrade: bigTeam } }) });
-        base.push({ label: `Offre B — ${modestTeam.name}, leadership garanti`, resolve: () => ({ text: `${modestTeam.name} t'offre moins de prestige, mais un rôle de leader garanti et un calendrier construit autour de toi.`, delta: { reputation: 2, relationEquipe: 5, teamUpgrade: modestTeam, flags: { leadershipGuarantee: true } } }) });
+        base.push({ label: `${bigTeam.name} (${upgradeLabel}) — contrat longue durée (3 ans), rôle d'équipier`, resolve: () => ({ text: `${bigTeam.name} t'offre la sécurité d'un contrat de 3 saisons — en tant qu'équipier au service de leaders déjà installés. Le tremplin idéal vers les Grands Tours, sans garantie de résultats personnels, mais sans avoir à repasser par le mercato avant un moment.`, delta: { reputation: 4, money: 15000, teamUpgrade: bigTeam, contract: { teamId: bigTeam.id, yearsRemaining: 3, winBonusMultiplier: 1, exitClauseFlexible: false } } }) });
+        base.push({ label: `${bigTeam.name} (${upgradeLabel}) — prime de victoire élevée, sans garantie de rôle`, resolve: () => ({ text: `${bigTeam.name} te propose un contrat plus court (1 saison), sans garantie de rôle mais avec une prime de victoire nettement plus généreuse — à toi de faire tes preuves.`, delta: { reputation: 3, teamUpgrade: bigTeam, contract: { teamId: bigTeam.id, yearsRemaining: 1, winBonusMultiplier: 1.6, exitClauseFlexible: true } } }) });
+        base.push({ label: `${modestTeam.name} — leadership garanti (1 an)`, resolve: () => ({ text: `${modestTeam.name} t'offre moins de prestige, mais un rôle de leader garanti et un calendrier construit autour de toi.`, delta: { reputation: 2, relationEquipe: 5, teamUpgrade: modestTeam, flags: { leadershipGuarantee: true }, contract: { teamId: modestTeam.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: false } } }) });
       } else {
         base.push({ label: "Écouter les offres extérieures", resolve: () => ({ text: "Les touches restent discrètes, tu resteras probablement où tu es.", delta: { reputation: 1 } }) });
       }
@@ -2161,7 +2182,63 @@ const WEATHER_START_DELTA = {
 // Pool d'imprévus. `condition` filtre l'éligibilité (profil réel de la course, météo, fatigue, moral, rival...).
 // `choices` est une FONCTION de contexte : les compétences/philosophies débloquées y ajoutent de vrais choix
 // supplémentaires, pas seulement de meilleures probabilités sur les choix existants.
+// Habileté technique sur le vélo — réutilise Placement (Tactique, accessible à tous les profils : bien
+// se placer dans le peloton, c'est aussi éviter les embrouilles) et Descendeur (bonus supplémentaire pour
+// les grimpeurs, spécifiquement dans les descentes). Aucune nouvelle compétence, juste un usage de plus
+// pour deux compétences déjà existantes.
+function bikeHandlingSkill(player) {
+  let skill = 0;
+  if (SkillEngine.hasSkill(player, "tact_placement")) skill += 1;
+  if (SkillEngine.hasSkill(player, "spec_g_descendeur")) skill += 1;
+  return skill;
+}
+
 const INCIDENT_POOL = [
+  {
+    // Distinct de "chute_grave" (qui frappe au hasard selon ta fatigue de fond) : ici, c'est un VRAI
+    // choix explicite du joueur qui porte le risque — prendre des trajectoires limites en descente ou
+    // dépasser par le bas-côté. La plupart du temps ça paie, mais parfois ça se termine mal.
+    id: "prise_de_risque", weight: 3, phaseLabel: "Moment décisif, prise de risque",
+    condition: (ctx) => { const p = terrainProfileFor(ctx.raceObj); return p.mountains > 25 || p.cobbles > 15; },
+    text: () => "Une portion technique s'annonce — une descente sinueuse, ou un passage étroit où il faut choisir entre jouer la sécurité ou tenter de grappiller une position en prenant des risques.",
+    choices: (ctx) => [
+      { label: "Prendre des trajectoires limites pour revenir", resolve: () => {
+          const roll = Math.random();
+          const mentalMitigation = SkillEngine.craquageResist(ctx.game.player) * 0.006;
+          const handlingMitigation = bikeHandlingSkill(ctx.game.player) * 0.02;
+          if (roll < Math.max(0.015, 0.07 - mentalMitigation - handlingMitigation)) {
+            // Chute grave : blessure, la course s'arrête ici pour toi (résultat forcé au plus bas).
+            return { text: "Tu perds le contrôle dans un virage serré. La chute est sérieuse — ta course s'arrête ici, et il va falloir du temps pour t'en remettre.", delta: { forme: -25, fatigue: -30, fatigueChronique: -20, reputation: -4, flags: { recentInjury: true }, forceDropped: true } };
+          }
+          if (roll < Math.max(0.10, 0.22 - handlingMitigation)) {
+            // Chute superficielle : plus de peur que de mal, mais du temps et de l'énergie perdus.
+            return { text: "Une glissade sans gravité — plus de peur que de mal, mais tu perds un temps précieux à te relever et à revenir dans la course.", delta: { fatigue: 7, tacticalBonus: -4 } };
+          }
+          return { text: "Le pari est payant : tu prends des risques calculés et ça se termine parfaitement bien.", delta: { fatigue: 5, tacticalBonus: 7 } };
+        } },
+      { label: "Rester prudent, ne pas forcer", resolve: () => ({ text: "Tu passes ce moment délicat sans prendre de risque inutile.", delta: { fatigue: 1 } }) },
+    ],
+  },
+  {
+    // Risque réel de chute grave en carrière pro — jusqu'ici seule la formation (16 ans) comportait ce
+    // risque. Le risque grimpe en continu avec la fatigue chronique et la pression du moment (mêmes
+    // moteurs que Fatigue Pipeline et Pressure Engine), atténué par le mental (craquageResist) ET
+    // l'habileté technique (Placement / Descendeur).
+    id: "chute_grave", weight: 2, phaseLabel: "Chute sérieuse",
+    condition: (ctx) => {
+      const chronic = ctx.game.player.stats.fatigueChronique || 0;
+      const pressure = computePressure(ctx.game, ctx.raceObj.name);
+      const mentalMitigation = SkillEngine.craquageResist(ctx.game.player) * 0.4;
+      const handlingMitigation = bikeHandlingSkill(ctx.game.player) * 6;
+      const riskFactor = Math.max(0, Math.max(0, (chronic - 22) * 0.0032) + Math.max(0, (pressure - 50) * 0.0012) - mentalMitigation * 0.001 - handlingMitigation * 0.001);
+      return Math.random() < riskFactor;
+    },
+    text: () => "Une chute sérieuse, dans un moment de fatigue extrême où tes réflexes n'étaient plus tout à fait là. Le diagnostic tombe : une blessure qui va t'écarter des routes plusieurs semaines.",
+    choices: () => [
+      { label: "Accepter la pause forcée et bien récupérer", resolve: () => ({ text: "Tu prends le temps nécessaire pour guérir correctement, sans précipiter les choses.", delta: { forme: -25, fatigue: -30, fatigueChronique: -20, reputation: -4, flags: { recentInjury: true } } }) },
+      { label: "Revenir le plus vite possible, quitte à forcer", resolve: () => ({ text: "Tu précipites ton retour à la compétition — risqué, mais tu limites la casse sur ta saison.", delta: { forme: -32, fatigue: -8, reputation: -2, flags: { recentInjury: true } } }) },
+    ],
+  },
   {
     // Dynamique classique des classiques/étapes de plaine : un petit groupe tente sa chance tôt dans la
     // course. Réutilise tacticalBonus (donc le Race Engine V2) et la réputation peloton déjà câblée —
@@ -2704,7 +2781,7 @@ function initialPlayer(form) {
 }
 
 function promoteToPro(game, team) {
-  const player = { ...game.player, team, phase: "pro", role: "équipier", money: 12000, skillPoints: 2, currentYear: new Date().getFullYear(), teamsHistory: [{ name: team.name, level: team.level, fromAge: game.player.age }] };
+  const player = { ...game.player, team, phase: "pro", role: "équipier", money: 12000, skillPoints: 2, currentYear: new Date().getFullYear(), teamsHistory: [{ name: team.name, level: team.level, fromAge: game.player.age }], missedObjectivesStreak: 0, contract: null };
   const peloton = generatePeloton();
   const rivalId = pickNewRivalId(peloton, player);
   return {
@@ -2889,6 +2966,52 @@ function clearSavedGame() {
   try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
 }
 
+// Succès méta — persistent d'une carrière à l'autre, stockage SÉPARÉ de la sauvegarde de partie
+// (jamais effacé par "Recommencer une carrière"). Chaque check() n'utilise que des données déjà
+// présentes sur le joueur en fin de carrière, aucune nouvelle mécanique de jeu.
+const ACHIEVEMENTS_KEY = "pro_cycling_life_achievements_v1";
+const ACHIEVEMENTS = [
+  { id: "monument", icon: "🏆", label: "Vainqueur d'un Monument", desc: "Gagner l'une des 5 classiques Monuments.",
+    check: (p) => p.palmares.some((pm) => /^(Victoire|Classement général)/.test(pm.label) && [...MONUMENTS].some((m) => pm.label.includes(m))) },
+  { id: "worlds", icon: "🌈", label: "Champion du monde", desc: "Remporter les Championnats du Monde.",
+    check: (p) => p.palmares.some((pm) => pm.label.includes("Championnats du Monde") && pm.label.startsWith("Victoire")) },
+  { id: "gt_winner", icon: "👑", label: "Vainqueur d'un Grand Tour", desc: "Remporter le classement général du Tour de France, du Giro ou de la Vuelta.",
+    check: (p) => p.palmares.some((pm) => /^(Victoire|Classement général)/.test(pm.label) && /Tour de France|Giro d'Italia|Vuelta a España/.test(pm.label)) },
+  { id: "jersey", icon: "🎽", label: "Collectionneur de maillots", desc: "Remporter un maillot secondaire (points, montagne ou jeune) sur une course à étapes.",
+    check: (p) => p.palmares.some((pm) => pm.label.startsWith("Maillot")) },
+  { id: "no_gt_career", icon: "🚵", label: "Une carrière sans Grand Tour", desc: "Terminer une carrière avec au moins une victoire, sans jamais avoir couru le moindre Grand Tour.",
+    check: (p) => p.palmares.length > 0 && !p.palmares.some((pm) => /Tour de France|Giro d'Italia|Vuelta a España/.test(pm.label)) },
+  { id: "longevity", icon: "⭐", label: "Longévité", desc: "Jouer au moins 15 saisons professionnelles.",
+    check: (p) => (p.seasonNumber || 0) >= 15 },
+  { id: "elite", icon: "🎖️", label: "Élite mondiale", desc: "Terminer ta carrière avec un niveau actuel de 85 ou plus.",
+    check: (p) => computeCurrentRating(p) >= 85 },
+  { id: "respected", icon: "🤝", label: "Capitaine respecté", desc: "Terminer avec une réputation dans le peloton de 85 ou plus.",
+    check: (p) => p.reputation.peloton >= 85 },
+  { id: "fortune", icon: "💰", label: "Fortune faite", desc: "Accumuler 300 000 € ou plus au cours de ta carrière.",
+    check: (p) => (p.money || 0) >= 300000 },
+  { id: "fairplay", icon: "🎗️", label: "Fair-play exemplaire", desc: "Terminer ta carrière avec une éthique de 90 ou plus.",
+    check: (p) => p.stats.ethique >= 90 },
+  { id: "comeback", icon: "🩹", label: "Renaissance", desc: "Revenir d'une blessure grave en carrière pro et tout de même construire une belle carrière.",
+    check: (p) => p.flags?.recentInjury && (computeCareerScore(p) || 0) >= 40 },
+];
+function loadAchievements() {
+  try { const raw = localStorage.getItem(ACHIEVEMENTS_KEY); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+}
+function saveAchievements(unlocked) {
+  try { localStorage.setItem(ACHIEVEMENTS_KEY, JSON.stringify(unlocked)); } catch (e) { /* ignore */ }
+}
+// Évalue les succès à la fin d'une carrière et fusionne les nouveaux avec ceux déjà débloqués
+// (un succès débloqué une fois reste acquis pour toujours, quelle que soit la carrière suivante).
+function evaluateAchievements(player) {
+  const current = loadAchievements();
+  const newlyUnlocked = [];
+  ACHIEVEMENTS.forEach((a) => {
+    if (!current[a.id] && a.check(player)) { current[a.id] = { unlockedAt: Date.now(), by: player.name }; newlyUnlocked.push(a); }
+  });
+  if (newlyUnlocked.length > 0) saveAchievements(current);
+  return newlyUnlocked;
+}
+
 function ProCyclingLife() {
   const [screen, setScreen] = useState("home");
   const [step, setStep] = useState(0);
@@ -2907,6 +3030,8 @@ function ProCyclingLife() {
   const [unlockCelebration, setUnlockCelebration] = useState(null); // { skill } — écran de célébration au déblocage
   const [restoredNotice, setRestoredNotice] = useState(false);
   const [epilogueChoice, setEpilogueChoice] = useState(null);
+  const [newAchievements, setNewAchievements] = useState([]);
+  const [achievementsEvaluated, setAchievementsEvaluated] = useState(false);
 
   // Restauration au chargement de la page. Le calendrier/queue d'une course en cours contient des fonctions
   // (choix, résolutions) qui ne peuvent pas être sérialisées en JSON — donc en cas de rechargement en pleine
@@ -2939,6 +3064,16 @@ function ProCyclingLife() {
   useEffect(() => {
     if (game) saveGameToStorage(game);
   }, [game]);
+
+  // Succès méta : évalués une seule fois à l'arrivée sur l'écran de fin, jamais pour une carrière
+  // interrompue avant même la signature pro (pas assez de contenu à évaluer dans ce cas).
+  useEffect(() => {
+    if (screen === "end" && game?.player && !game.player.flags?.careerEndingInjury && !achievementsEvaluated) {
+      setNewAchievements(evaluateAchievements(game.player));
+      setAchievementsEvaluated(true);
+    }
+    if (screen !== "end") setAchievementsEvaluated(false);
+  }, [screen, game]);
 
   function startCareer() {
     const player = initialPlayer(form);
@@ -3016,6 +3151,10 @@ function ProCyclingLife() {
       player.seasonNumber += 1;
       player.skillPoints += 2;
       player.currentYear = (player.currentYear || new Date().getFullYear()) + 1;
+      // Le contrat négocié au mercato court d'une saison sur l'autre.
+      if (player.contract && player.contract.yearsRemaining > 0) {
+        player.contract = { ...player.contract, yearsRemaining: player.contract.yearsRemaining - 1 };
+      }
       const forced = player.age >= 40 || player.stats.forme <= 8;
       if (forced) player.retired = true;
       setShowRecap(true);
@@ -3073,7 +3212,8 @@ function ProCyclingLife() {
         g = { ...g, player: { ...g.player, history: [...g.player.history, bonusText] } };
       }
       // Objectifs de saison personnels choisis par le joueur : évalués à partir de ce qui vient de se
-      // passer (nouvelles entrées de palmarès, points UCI accumulés) — narratif + petit vrai retour.
+      // passer (nouvelles entrées de palmarès, points UCI accumulés). Un vrai bonus aléatoire si atteints,
+      // et le DS qui commence à s'agacer après plusieurs saisons consécutives d'échec total.
       if (g.seasonObjectives && g.seasonObjectives.length > 0) {
         const newPalmares = g.player.palmares.slice(g.seasonStartPalmaresCount || 0).map((p) => p.label);
         const ctx = { newPalmares, uciPointsThisSeason: g.player.uciPoints || 0, player: g.player, wasWTAtSeasonStart: g.wasWTAtSeasonStart };
@@ -3081,12 +3221,29 @@ function ProCyclingLife() {
         const missed = g.seasonObjectives.filter((id) => !met.includes(id));
         if (met.length > 0) {
           const labels = met.map((id) => SEASON_OBJECTIVES.find((o) => o.id === id)?.label).filter(Boolean);
-          g = applyDelta(g, { reputation: met.length * 3, relationEquipe: met.length * 2 });
-          g = { ...g, player: { ...g.player, history: [...g.player.history, `${g.player.age} ans — objectifs de saison atteints : ${labels.join(", ")}.`] } };
+          // Bonus tiré au sort — la récompense d'une bonne saison n'est jamais tout à fait la même.
+          const bonusRoll = pick(["reputation", "specialty", "money", "relation"]);
+          let bonusDelta = {}, bonusText = "";
+          if (bonusRoll === "reputation") { bonusDelta = { reputation: met.length * 4 }; bonusText = "un vrai coup de projecteur médiatique"; }
+          else if (bonusRoll === "specialty") { const dim = pick(["montagne", "sprint", "clm", "pave"]); bonusDelta = { specialtyDeltas: { [dim]: met.length * 2 } }; bonusText = "une vraie progression physique, saluée par le staff"; }
+          else if (bonusRoll === "money") { bonusDelta = { money: met.length * 5000 }; bonusText = "une prime exceptionnelle du sponsor"; }
+          else { bonusDelta = { relationEquipe: met.length * 5 }; bonusText = "la confiance renforcée de ton encadrement"; }
+          g = applyDelta(g, { reputation: met.length * 2, relationEquipe: met.length * 1, ...bonusDelta });
+          g = { ...g, player: { ...g.player, missedObjectivesStreak: 0, history: [...g.player.history, `${g.player.age} ans — objectifs de saison atteints : ${labels.join(", ")} (${bonusText}).`] } };
         }
         if (missed.length > 0) {
           const labels = missed.map((id) => SEASON_OBJECTIVES.find((o) => o.id === id)?.label).filter(Boolean);
           g = { ...g, player: { ...g.player, history: [...g.player.history, `${g.player.age} ans — objectifs de saison manqués : ${labels.join(", ")}.`] } };
+        }
+        // Échec total de la saison (aucun objectif atteint) : le compteur d'agacement du DS avance.
+        if (met.length === 0) {
+          const streak = (g.player.missedObjectivesStreak || 0) + 1;
+          if (streak >= 3) {
+            g = applyDelta(g, { relationEquipe: -10 });
+            g = { ...g, player: { ...g.player, missedObjectivesStreak: 0, history: [...g.player.history, `${g.player.age} ans — ${g.player.team?.director || "le DS"} commence sérieusement à s'agacer après plusieurs saisons sans le moindre objectif atteint.`] } };
+          } else {
+            g = { ...g, player: { ...g.player, missedObjectivesStreak: streak } };
+          }
         }
       }
       g = { ...g, player: { ...g.player, uciPoints: 0 }, seasonBonusSkillPoints: 0, recentResultTiers: [] };
@@ -3242,6 +3399,44 @@ function ProCyclingLife() {
           <ChoiceButton primary onClick={() => { setForm({ name: "", nation: null, origin: null, specialtyPrimary: null, lifestyle: null }); setStep(0); setScreen("intro"); }}>
             🚴 Nouvelle carrière
           </ChoiceButton>
+          <div style={{ marginTop: 10 }}>
+            <ChoiceButton onClick={() => setScreen("achievements")}>
+              🏅 Succès ({Object.keys(loadAchievements()).length}/{ACHIEVEMENTS.length})
+            </ChoiceButton>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------------- SUCCÈS ---------------- */
+  if (screen === "achievements") {
+    const unlocked = loadAchievements();
+    return (
+      <div style={{ background: T.bg, minHeight: 520, color: T.ink, fontFamily: "Inter, sans-serif", padding: 24, borderRadius: 12 }}>
+        <style>{FONT_IMPORT}</style>
+        <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 13, letterSpacing: 3, color: T.accent, textTransform: "uppercase", marginBottom: 4 }}>Palmarès du joueur</div>
+        <h1 style={{ fontFamily: "Oswald, sans-serif", fontSize: 26, margin: "0 0 4px 0" }}>Succès</h1>
+        <p style={{ color: T.inkMuted, fontSize: 13, marginBottom: 16 }}>
+          {Object.keys(unlocked).length}/{ACHIEVEMENTS.length} débloqués — conservés d'une carrière à l'autre, quoi qu'il arrive à ton coureur actuel.
+        </p>
+        {ACHIEVEMENTS.map((a) => {
+          const done = unlocked[a.id];
+          return (
+            <Card key={a.id} style={{ marginBottom: 8, opacity: done ? 1 : 0.5, borderColor: done ? T.accent2 : T.line }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 24 }}>{done ? a.icon : "🔒"}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{a.label}</div>
+                  <div style={{ fontSize: 12, color: T.inkMuted }}>{a.desc}</div>
+                  {done && <div style={{ fontSize: 11, color: T.accent2, marginTop: 2 }}>Débloqué par {done.by}</div>}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+        <div style={{ marginTop: 16 }}>
+          <ChoiceButton primary onClick={() => setScreen("home")}>← Retour à l'accueil</ChoiceButton>
         </div>
       </div>
     );
@@ -3381,16 +3576,17 @@ function ProCyclingLife() {
         <div style={{ fontSize: 11, color: T.inkMuted, marginTop: 4, marginBottom: 8, padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span>{estimateDuration(race)} · {race.isStageRace ? "Course à étapes" : "Course d'un jour"}</span>
-            <span title="Enjeu">{"⭐".repeat(stars)}</span>
+            <span>Enjeu : {"⭐".repeat(stars)}</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px", marginBottom: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 6 }}>
             {PROFILE_DIMS.map((d) => (
-              <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 16 }}>{d.icon}</span>
+              <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 18, textAlign: "center" }}>{d.icon}</span>
+                <span style={{ width: 62, flexShrink: 0 }}>{d.label}</span>
                 <div style={{ flex: 1, height: 5, background: T.line, borderRadius: 3, overflow: "hidden" }}>
                   <div style={{ width: `${Math.round(profile[d.key] / 10) * 10}%`, height: "100%", background: T.accent }} />
                 </div>
-                <span style={{ width: 20, textAlign: "right", opacity: 0.7 }}>{Math.round(profile[d.key] / 10)}</span>
+                <span style={{ width: 24, textAlign: "right", opacity: 0.7 }}>{Math.round(profile[d.key] / 10)}/10</span>
               </div>
             ))}
           </div>
@@ -3591,6 +3787,21 @@ function ProCyclingLife() {
         <h1 style={{ fontFamily: "Oswald, sans-serif", fontSize: 30, margin: "4px 0 2px 0" }}>{player.name}</h1>
         <div style={{ color: T.inkMuted, marginBottom: 16 }}>{player.nation.flag} {player.nation.label} · {player.age} ans · {statusText}</div>
 
+        {newAchievements.length > 0 && (
+          <Card style={{ marginBottom: 16, borderColor: T.accent2 }}>
+            <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 15, marginBottom: 8, color: T.accent2 }}>🏅 Nouveaux succès débloqués</div>
+            {newAchievements.map((a) => (
+              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+                <span style={{ fontSize: 18 }}>{a.icon}</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{a.label}</div>
+                  <div style={{ fontSize: 11, color: T.inkMuted }}>{a.desc}</div>
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
+
         <Card style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
             <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 20, color: T.accent }}>{verdictFor(player)}</div>
@@ -3650,7 +3861,7 @@ function ProCyclingLife() {
           </div>
         )}
 
-        <ChoiceButton primary onClick={() => { clearSavedGame(); setForm({ name: "", nation: null, origin: null, specialtyPrimary: null, lifestyle: null }); setStep(0); setGame(null); setEpilogueChoice(null); setScreen("intro"); }}>
+        <ChoiceButton primary onClick={() => { clearSavedGame(); setForm({ name: "", nation: null, origin: null, specialtyPrimary: null, lifestyle: null }); setStep(0); setGame(null); setEpilogueChoice(null); setNewAchievements([]); setScreen("intro"); }}>
           <RotateCcw size={14} style={{ display: "inline", marginRight: 6 }} /> Recommencer une carrière
         </ChoiceButton>
       </div>
@@ -3916,7 +4127,17 @@ function ProCyclingLife() {
               <div style={{ fontSize: 11, color: T.inkMuted, textTransform: "uppercase", letterSpacing: 1 }}>Taille de l'effectif</div>
               <div style={{ fontSize: 14, marginBottom: 8 }}>{player.team.roster} coureurs</div>
               <div style={{ fontSize: 11, color: T.inkMuted, textTransform: "uppercase", letterSpacing: 1 }}>Leader actuel du peloton</div>
-              <div style={{ fontSize: 14 }}>{(() => { const l = teamLeader(game, player.team); return l ? `${flagFor(l.nation)} ${l.name} (niv. ${l.level})` : "Aucune figure de proue identifiée"; })()}</div>
+              <div style={{ fontSize: 14, marginBottom: 8 }}>{(() => { const l = teamLeader(game, player.team); return l ? `${flagFor(l.nation)} ${l.name} (niv. ${l.level})` : "Aucune figure de proue identifiée"; })()}</div>
+              {player.contract && (
+                <>
+                  <div style={{ fontSize: 11, color: T.inkMuted, textTransform: "uppercase", letterSpacing: 1 }}>Contrat en cours</div>
+                  <div style={{ fontSize: 13 }}>
+                    {player.contract.yearsRemaining > 0 ? `Encore ${player.contract.yearsRemaining} saison${player.contract.yearsRemaining > 1 ? "s" : ""}` : "Dernière année de contrat"}
+                    {player.contract.winBonusMultiplier > 1 && " · prime de victoire renforcée"}
+                    {player.contract.exitClauseFlexible && " · clause de sortie facilitée"}
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <Bar label="Réputation de l'équipe" value={player.team.reputation} color={T.purple} />
