@@ -57,9 +57,9 @@ function flagFor(code) {
 }
 
 const ORIGINS = [
-  { id: "rural", label: "Club amateur rural", desc: "Peu de moyens, mais une vraie rage de vaincre." },
-  { id: "academie", label: "Académie structurée", desc: "Encadrement pro dès le plus jeune âge." },
-  { id: "autodidacte", label: "Autodidacte", desc: "Formé seul, sur les routes, sans filet." },
+  { id: "rural", label: "Club amateur rural", desc: "Peu de moyens, peu de visibilité au départ — mais une vraie rage de vaincre." },
+  { id: "academie", label: "Académie structurée", desc: "Encadrement pro dès le plus jeune âge : plus de visibilité, et un vrai coup de pouce technique sur ta spécialité." },
+  { id: "autodidacte", label: "Autodidacte", desc: "Formé seul, sans filet — le moins connu des trois, mais une polyvalence inattendue développée à force de te débrouiller." },
 ];
 
 const SPECIALTIES = [
@@ -132,7 +132,8 @@ const SKILL_TREE_CONFIG = {
       skills: [
         { id: "tact_placement", label: "Placement", desc: "Réduit la fatigue dans les moments de bataille pour la position — et réduit aussi ton risque de chute, en descente comme sur les pavés", cost: 1, tier: 1, effects: [{ type: "fatigueResist", value: 3 }] },
         { id: "tact_lecture", label: "Lecture de course", desc: "Débloque le choix « Contre-attaquer » en cours de course", cost: 2, tier: 1, effects: [{ type: "unlockChoice", key: "contre_attaquer" }] },
-        { id: "tact_vision", label: "Vision", desc: "Débloque « Suivre uniquement le rival » et « Demander un relais à un équipier »", cost: 4, tier: 2, effects: [{ type: "unlockChoice", key: "suivre_rival" }, { type: "unlockChoice", key: "demander_relais" }] },
+        { id: "tact_vision", label: "Vision", desc: "Débloque « Suivre uniquement le rival »", cost: 3, tier: 2, effects: [{ type: "unlockChoice", key: "suivre_rival" }] },
+        { id: "tact_releve", label: "Relais", desc: "Débloque « Demander un relais à un équipier » — savoir demander de l'aide, ça s'apprend aussi", cost: 1, tier: 1, effects: [{ type: "unlockChoice", key: "demander_relais" }] },
         { id: "tact_effort", label: "Gestion de l'effort", desc: "Réduit largement la fatigue accumulée en course", cost: 1, tier: 1, effects: [{ type: "fatigueResist", value: 5 }] },
         { id: "tact_timing", label: "Sens du timing", desc: "Petit bonus de performance à l'arrivée, sur toutes les courses", cost: 2, tier: 2, effects: [{ type: "finalStageBonus", value: 3 }] },
         { id: "tact_aspiration", label: "Aspiration", desc: "Réduit la fatigue dans le peloton", cost: 1, tier: 1, effects: [{ type: "fatigueResist", value: 3 }] },
@@ -242,9 +243,9 @@ const SKILL_TREE_CONFIG = {
 
   // Styles de carrière émergents — jamais choisis directement, calculés en direct par SkillEngine.getCareerStyle().
   careerStyles: [
-    { id: "cannibale", label: "Le Cannibale", desc: "Une faim de victoires insatiable.", check: (ctx) => ctx.palmares.filter((p) => p.label.startsWith("Victoire")).length >= 6 },
-    { id: "chasseur_gt", label: "Chasseur de Grands Tours", desc: "Vit pour les trois semaines de juillet, mai et août.", check: (ctx) => ctx.palmares.some((p) => /Tour de France|Giro|Vuelta/.test(p.label)) },
-    { id: "roi_classiques", label: "Roi des Classiques", desc: "Les Monuments sont son terrain de chasse.", check: (ctx) => ctx.palmares.filter((p) => /Flandres|Roubaix|Liège|San Remo|Lombardia/.test(p.label)).length >= 2 },
+    { id: "cannibale", label: "Le Cannibale", desc: "Une faim de victoires insatiable.", check: (ctx) => ctx.palmares.filter((p) => p.resultType === "victoire" || p.resultType === "victoire_etape").length >= 6 },
+    { id: "chasseur_gt", label: "Chasseur de Grands Tours", desc: "Vit pour les trois semaines de juillet, mai et août.", check: (ctx) => ctx.palmares.some((p) => p.isGrandTour) },
+    { id: "roi_classiques", label: "Roi des Classiques", desc: "Les Monuments sont son terrain de chasse.", check: (ctx) => ctx.palmares.filter((p) => p.isMonument).length >= 2 },
     { id: "stategiste", label: "Le Stratège", desc: "Lit la course mieux que quiconque.", check: (ctx) => ctx.hasSkill("tact_vision") && ctx.hasSkill("tact_lecture") },
     { id: "capitaine", label: "Le Capitaine", desc: "L'équipe se rassemble derrière lui.", check: (ctx) => ctx.hasSkill("philo_leader") && ctx.hasSkill("mental_leadership") },
     { id: "baroudeur", label: "Le Baroudeur", desc: "Toujours dans le bon coup, loin devant.", check: (ctx) => ctx.hasSkill("chasseur_etape") },
@@ -478,7 +479,7 @@ const SkillEngine = (() => {
   // Titre automatique du coureur — purement dérivé de son âge, son palmarès et sa réputation.
   // Aucune stat nouvelle : tout est déjà disponible sur l'objet joueur.
   function computeTitle(player) {
-    const wins = (player.palmares || []).filter((p) => /Victoire|Classement général|Championnats du Monde/.test(p.label)).length;
+    const wins = (player.palmares || []).filter((p) => p.resultType === "victoire" || p.isWorlds).length;
     const rep = player.reputation?.peloton || 0;
     if (wins >= 10 || rep >= 90) return "Légende";
     if (wins >= 5 || rep >= 70) return "Champion";
@@ -889,7 +890,7 @@ const NEWCOMER_HEADLINES = [
 // Statut de favori : dérivé du palmarès récent et de la réputation médiatique déjà suivis — pas une nouvelle
 // jauge de "pression", juste une lecture de situation qui alimente les médias et un incident de course dédié.
 function isFavoriteContext(player) {
-  const recentWins = (player.palmares || []).slice(-4).filter((p) => /Victoire|Classement général|Championnats du Monde/.test(p.label)).length;
+  const recentWins = (player.palmares || []).slice(-4).filter((p) => p.resultType === "victoire" || p.isWorlds).length;
   return recentWins >= 2 && (player.reputation?.medias || 0) >= 55;
 }
 
@@ -931,6 +932,10 @@ function computePressure(game, raceName) {
   // Confiance : réutilise la motivation, jusqu'ici peu exploitée ailleurs dans le moteur.
   pressure -= (player.stats.motivation - 50) * 0.15;
 
+  // Académie : l'encadrement précoce vient avec des attentes plus élevées — la pression ressentie
+  // est structurellement un peu plus forte, quel que soit le contexte de la course.
+  if (player.flags?.originAcademie) pressure += 6;
+
   return clamp(pressure);
 }
 
@@ -961,6 +966,34 @@ function buildNewsFeed(pelotonNews, player) {
 // Les 5 vrais Monuments du calendrier — utilisés pour évaluer l'objectif "remporter une classique majeure".
 const MONUMENTS = new Set(["Milan-San Remo", "Tour des Flandres", "Paris-Roubaix", "Liège-Bastogne-Liège", "Il Lombardia"]);
 
+// ============================================================================
+// PALMARÈS STRUCTURÉ — chaque entrée porte un texte d'affichage ET des champs machine-lisibles
+// (resultType, raceName, isMonument, isGrandTour, isWorlds), construits UNE SEULE FOIS ici. Tout le
+// reste du jeu (succès, score de carrière, titre, objectifs de saison, styles de carrière...) lit ces
+// champs structurés — plus personne ne doit ré-interpréter le texte affiché pour en déduire quoi que
+// ce soit. Le texte peut changer librement sans jamais rien casser ailleurs.
+// ============================================================================
+const PALMARES_LABEL_PREFIX = {
+  victoire: "Victoire", victoire_gc: "Classement général", podium: "Podium", top10: "Top 10",
+  maillot_pois: "Maillot à pois", maillot_points: "Maillot par points", maillot_jeune: "Maillot du meilleur jeune",
+  victoire_etape: "Victoire d'étape",
+};
+const PALMARES_RESULT_TYPE = {
+  victoire: "victoire", victoire_gc: "victoire", podium: "podium", top10: "top10",
+  maillot_pois: "maillot", maillot_points: "maillot", maillot_jeune: "maillot",
+  victoire_etape: "victoire_etape",
+};
+function buildPalmaresEntry(raceName, kind) {
+  return {
+    label: `${PALMARES_LABEL_PREFIX[kind]} — ${raceName}`,
+    resultType: PALMARES_RESULT_TYPE[kind],
+    raceName,
+    isMonument: MONUMENTS.has(raceName),
+    isGrandTour: !!GRAND_TOUR_FLAVOR[raceName],
+    isWorlds: raceName === "Championnats du Monde",
+  };
+}
+
 // Objectifs de saison : le joueur en choisit 3 à 5 en début de saison. Rien de nouveau côté données —
 // chaque objectif est évalué en fin de saison à partir de ce qui existe déjà (palmares, points UCI, équipe).
 const SEASON_OBJECTIVES = [
@@ -978,11 +1011,11 @@ const SEASON_OBJECTIVES = [
 function evaluateSeasonObjective(objId, ctx) {
   const { newPalmares, uciPointsThisSeason, player, wasWTAtSeasonStart } = ctx;
   switch (objId) {
-    case "monument": return newPalmares.some((p) => /^(Victoire|Classement général)/.test(p) && [...MONUMENTS].some((m) => p.includes(m)));
-    case "anywin": return newPalmares.some((p) => /^(Victoire|Classement général)/.test(p));
-    case "worlds": return newPalmares.some((p) => p.includes("Championnats du Monde"));
-    case "gc": return newPalmares.some((p) => /^(Victoire|Podium|Classement général)/.test(p) && /Tour de France|Giro d'Italia|Vuelta a España/.test(p));
-    case "jersey": return newPalmares.some((p) => p.startsWith("Maillot"));
+    case "monument": return newPalmares.some((p) => p.resultType === "victoire" && p.isMonument);
+    case "anywin": return newPalmares.some((p) => p.resultType === "victoire");
+    case "worlds": return newPalmares.some((p) => p.isWorlds);
+    case "gc": return newPalmares.some((p) => (p.resultType === "victoire" || p.resultType === "podium") && p.isGrandTour);
+    case "jersey": return newPalmares.some((p) => p.resultType === "maillot");
     case "uci": return uciPointsThisSeason >= 150;
     case "wt_debut": return player.team?.level === TEAM_LEVELS.WT && !wasWTAtSeasonStart;
     default: return false;
@@ -1113,7 +1146,7 @@ const RACE_GROUPS = { FRONT: "tête de course", PELOTON: "peloton principal", CH
 const GROUP_ORDER = [RACE_GROUPS.DROPPED, RACE_GROUPS.CHASE, RACE_GROUPS.PELOTON, RACE_GROUPS.FRONT];
 const GROUP_RANK = Object.fromEntries(GROUP_ORDER.map((g, i) => [g, i]));
 
-function initRaceState() { return { group: RACE_GROUPS.PELOTON, energy: 100 }; }
+function initRaceState() { return { group: RACE_GROUPS.PELOTON, energy: 100, role: null, leaderName: null, leaderLevel: null }; }
 
 function moveGroup(current, direction) {
   const idx = GROUP_ORDER.indexOf(current);
@@ -1167,8 +1200,8 @@ function raceOutcome(player, specKey, raceName, tier) {
   // La résistance à la fatigue (Endurance, Gestion du stress, Gestion de l'effort...) réduit le coût réel,
   // plafonnée à 60% de réduction pour qu'un effort décisif reste toujours un effort.
   const fatigueReduction = clamp01(1 - SkillEngine.fatigueResist(player) / 25, 0.4, 1);
-  if (tier === "victoire") return { tier, text: `Victoire sur ${raceName} ! Le public scande ton nom.`, palmares: [`Victoire — ${raceName}`], reputation: Math.round(16 * repFactor), forme: -Math.round(8 * costFactor * fatigueReduction), fatigue: Math.round(10 * costFactor * fatigueReduction) };
-  if (tier === "podium") return { tier, text: `Tu montes sur le podium de ${raceName}. Une belle carte de visite.`, palmares: [`Podium — ${raceName}`], reputation: Math.round(9 * repFactor), forme: -Math.round(6 * costFactor * fatigueReduction), fatigue: Math.round(8 * costFactor * fatigueReduction) };
+  if (tier === "victoire") return { tier, text: `Victoire sur ${raceName} ! Le public scande ton nom.`, palmares: [buildPalmaresEntry(raceName, "victoire")], reputation: Math.round(16 * repFactor), forme: -Math.round(8 * costFactor * fatigueReduction), fatigue: Math.round(10 * costFactor * fatigueReduction) };
+  if (tier === "podium") return { tier, text: `Tu montes sur le podium de ${raceName}. Une belle carte de visite.`, palmares: [buildPalmaresEntry(raceName, "podium")], reputation: Math.round(9 * repFactor), forme: -Math.round(6 * costFactor * fatigueReduction), fatigue: Math.round(8 * costFactor * fatigueReduction) };
   if (tier === "top10") return { tier, text: `Un discret top 10 sur ${raceName}. Solide, sans éclat.`, reputation: Math.round(3 * repFactor), forme: -Math.round(4 * costFactor * fatigueReduction), fatigue: Math.round(6 * costFactor * fatigueReduction) };
   return { tier, text: `${raceName} t'échappe. Une course à oublier vite.`, reputation: -2, forme: -Math.round(3 * costFactor * fatigueReduction), fatigue: Math.round(5 * costFactor * fatigueReduction) };
 }
@@ -1232,14 +1265,14 @@ function applyStageRaceJerseys(game, raceName, baseText) {
   const palmares = [];
   let uciPoints = 0;
 
-  if (jerseys.kom.position === 1) { text += ` Tu t'empares aussi du maillot à pois de meilleur grimpeur !`; palmares.push(`Maillot à pois — ${raceName}`); uciPoints += JERSEY_UCI_POINTS; }
+  if (jerseys.kom.position === 1) { text += ` Tu t'empares aussi du maillot à pois de meilleur grimpeur !`; palmares.push(buildPalmaresEntry(raceName, "maillot_pois")); uciPoints += JERSEY_UCI_POINTS; }
   else if (jerseys.kom.position <= 3) { text += ` Tu termines ${ordinal(jerseys.kom.position)} du classement de meilleur grimpeur.`; }
 
-  if (jerseys.points.position === 1) { text += ` Le maillot par points te revient également !`; palmares.push(`Maillot par points — ${raceName}`); uciPoints += JERSEY_UCI_POINTS; }
+  if (jerseys.points.position === 1) { text += ` Le maillot par points te revient également !`; palmares.push(buildPalmaresEntry(raceName, "maillot_points")); uciPoints += JERSEY_UCI_POINTS; }
   else if (jerseys.points.position <= 3) { text += ` Tu es ${ordinal(jerseys.points.position)} du classement par points.`; }
 
   if (jerseys.youth) {
-    if (jerseys.youth.position === 1) { text += ` Chez les jeunes, tu domines aussi le classement et repars avec le maillot blanc !`; palmares.push(`Maillot du meilleur jeune — ${raceName}`); uciPoints += Math.round(JERSEY_UCI_POINTS * 0.75); }
+    if (jerseys.youth.position === 1) { text += ` Chez les jeunes, tu domines aussi le classement et repars avec le maillot blanc !`; palmares.push(buildPalmaresEntry(raceName, "maillot_jeune")); uciPoints += Math.round(JERSEY_UCI_POINTS * 0.75); }
     else if (jerseys.youth.position <= 3) { text += ` Chez les moins de ${YOUTH_AGE_LIMIT} ans, tu es ${ordinal(jerseys.youth.position)}.`; }
   }
 
@@ -1333,13 +1366,30 @@ function buildRaceResultsNews(peloton, racedNames, rivalId) {
 // Simule le peloton présent sur la course (jusqu'à 25 coureurs compatibles + le rival), classe tout le monde,
 // et en déduit ta position réelle — c'est cette position qui détermine ton résultat (victoire/podium/top10/anonyme)
 // ET les points UCI distribués (à toi comme aux coureurs du peloton présents).
-function runRaceField(game, specKey, raceName) {
+// Complète le champ d'un championnat national quand le peloton simulé ne contient pas assez de
+// compatriotes pour un classement crédible (30 nations pour 30 coureurs : c'est la norme, pas
+// l'exception). Même forme qu'un coureur généré normalement, nationalité forcée.
+function generateCompatriotFiller(nationCode) {
+  const level = rand(45, 88);
+  return { id: nextRiderId(), name: randomNameForNation(nationCode), nation: nationCode, spec: pick(SPEC_IDS), level, age: rand(19, 34), team: pick(teamPoolForLevel(level)), points: 0 };
+}
+
+function runRaceField(game, specKey, raceName, nationalOnly = false) {
   const rival = getRival(game);
   const raceState = game.raceState || initRaceState();
-  let field = (game.peloton || []).filter((r) => specFit(r.spec, specKey) >= 0.3);
+  const nationCode = game.player.nation?.code;
+  let sourcePeloton = game.peloton || [];
+  if (nationalOnly && nationCode) {
+    sourcePeloton = sourcePeloton.filter((r) => r.nation === nationCode);
+    // Un championnat national doit rester un vrai classement, même si le peloton simulé ne compte
+    // presque aucun compatriote cette saison-là — on complète plutôt que de courir à 3.
+    while (sourcePeloton.length < 18) sourcePeloton = [...sourcePeloton, generateCompatriotFiller(nationCode)];
+  }
+  let field = sourcePeloton.filter((r) => specFit(r.spec, specKey) >= 0.3);
   field = [...field].sort(() => Math.random() - 0.5).slice(0, 25);
-  // Le rival est toujours engagé sur tes courses clés, même s'il n'est pas tombé dans l'échantillon aléatoire.
-  if (rival && !field.some((r) => r.id === rival.id)) field = [...field, rival];
+  // Le rival est toujours engagé sur tes courses clés, même s'il n'est pas tombé dans l'échantillon
+  // aléatoire — sauf sur un championnat national : il n'a rien à y faire s'il n'est pas compatriote.
+  if (rival && !field.some((r) => r.id === rival.id) && (!nationalOnly || rival.nation === nationCode)) field = [...field, rival];
 
   const major = MAJOR_RACE_NAMES.has(raceName);
   // Chaque coureur du peloton simulé est assigné à un groupe (pondéré par son niveau ET son adéquation
@@ -1391,8 +1441,8 @@ function runRaceField(game, specKey, raceName) {
 }
 
 // Ton rival partage toujours ton profil : il est donc présent sur toutes tes courses clés.
-function raceOutcomeVsRival(game, specKey, raceName) {
-  const field = runRaceField(game, specKey, raceName);
+function raceOutcomeVsRival(game, specKey, raceName, nationalOnly = false) {
+  const field = runRaceField(game, specKey, raceName, nationalOnly);
   const rival = getRival(game);
   const o = raceOutcome(game.player, specKey, raceName, field.tier);
   let rivalLine, rivalDelta;
@@ -1417,6 +1467,7 @@ function applyDelta(game, delta = {}) {
   let seasonMajorResults = game.seasonMajorResults || {};
   let tacticalBonus = game.tacticalBonus || 0;
   let raceState = game.raceState ? { ...game.raceState } : initRaceState();
+  let currentGT = game.currentGT ? { ...game.currentGT } : null;
   let talentCharges = game.talentCharges ? { ...game.talentCharges } : {};
   let effortAccum = game.effortAccum || 0;
   let recentResultTiers = game.recentResultTiers ? [...game.recentResultTiers] : [];
@@ -1454,7 +1505,10 @@ function applyDelta(game, delta = {}) {
   }
   if (delta.reputation !== undefined) {
     // Image publique / Athlète discret amortissent les pertes de réputation liées à un scandale.
-    const effective = delta.reputation < 0 ? delta.reputation * (1 - SkillEngine.ethiqueShield(player)) : delta.reputation;
+    // Académie, à l'inverse, les amplifie légèrement : des attentes plus élevées dès le départ font
+    // que les échecs y pèsent un peu plus lourd — le revers de la longueur d'avance initiale.
+    const academiePenalty = player.flags?.originAcademie ? 1.12 : 1;
+    const effective = delta.reputation < 0 ? delta.reputation * (1 - SkillEngine.ethiqueShield(player)) * academiePenalty : delta.reputation;
     const dims = addRep(effective);
     Object.entries(dims).forEach(([k, v]) => {
       // Popularité / Charisme / Sponsors ajoutent un petit bonus ciblé quand la réputation progresse.
@@ -1463,14 +1517,18 @@ function applyDelta(game, delta = {}) {
     });
   }
   if (delta.specialtyDeltas) {
-    Object.entries(delta.specialtyDeltas).forEach(([k, v]) => { player.specialties[k] = clamp((player.specialties[k] || 0) + v); });
+    // Autodidacte (Talent brut) : une progression qui dépend surtout de ses propres choix — les gains
+    // de spécialité obtenus en cours de carrière (événements, choix tactiques) sont donc amplifiés.
+    const talentBrutBonus = player.flags?.originAutodidacte ? 1.2 : 1;
+    Object.entries(delta.specialtyDeltas).forEach(([k, v]) => { player.specialties[k] = clamp((player.specialties[k] || 0) + (v > 0 ? v * talentBrutBonus : v)); });
   }
   if (delta.palmares) {
-    delta.palmares.forEach((label) => {
-      player.palmares.push({ label, age: player.age });
-      player.history.push(`${player.age} ans — ${label}`);
-      // Prime de victoire négociée au contrat : ne paie que sur une vraie victoire, proportionnelle au multiplicateur négocié au mercato.
-      if (/^(Victoire|Classement général)/.test(label) && player.contract?.winBonusMultiplier > 1) {
+    delta.palmares.forEach((entry) => {
+      player.palmares.push({ ...entry, age: player.age });
+      player.history.push(`${player.age} ans — ${entry.label}`);
+      // Prime de victoire négociée au contrat : ne paie que sur une vraie victoire, proportionnelle au
+      // multiplicateur négocié au mercato — vérifié sur resultType, plus jamais sur le texte affiché.
+      if (entry.resultType === "victoire" && player.contract?.winBonusMultiplier > 1) {
         const bonus = Math.round(4000 * (player.contract.winBonusMultiplier - 1));
         player.money = (player.money || 0) + bonus;
         player.history.push(`${player.age} ans — touche une prime de victoire contractuelle de ${bonus.toLocaleString("fr-FR")} €.`);
@@ -1506,9 +1564,34 @@ function applyDelta(game, delta = {}) {
   // Contrat négocié au mercato : durée (verrouille f2 tant qu'elle court), prime de victoire, clause de sortie.
   if (delta.contract) { player.contract = delta.contract; }
   if (delta.uciPoints) { player.uciPoints = (player.uciPoints || 0) + delta.uciPoints; }
+  // Grand Tour Engine V2 : le classement général et les maillots annexes s'accumulent jour après jour
+  // dans game.currentGT, plutôt que d'être décidés par une seule étape. reset initialise un nouveau
+  // Grand Tour (grand départ), clear le referme (arrivée finale) — les deux jamais en même temps que
+  // gcPoints/komPoints/pointsPoints, qui eux s'ajoutent simplement à l'existant.
+  if (delta.gtUpdate) {
+    if (delta.gtUpdate.reset) {
+      currentGT = { tourName: delta.gtUpdate.tourName, kind: delta.gtUpdate.kind, totalDays: delta.gtUpdate.totalDays, gcScore: 0, komScore: 0, pointsScore: 0 };
+    } else if (delta.gtUpdate.clear) {
+      currentGT = null;
+    } else if (currentGT) {
+      currentGT = {
+        ...currentGT,
+        gcScore: (currentGT.gcScore || 0) + (delta.gtUpdate.gcPoints || 0),
+        komScore: (currentGT.komScore || 0) + (delta.gtUpdate.komPoints || 0),
+        pointsScore: (currentGT.pointsScore || 0) + (delta.gtUpdate.pointsPoints || 0),
+      };
+    }
+  }
   // Chute grave forçant la fin de course : plutôt que de restructurer le déroulé des étapes, on force
   // directement le groupe au plancher (décroché) et l'énergie au minimum — le Race Engine V2 garantit
   // alors mécaniquement un résultat anonyme, sans avoir besoin d'interrompre la séquence de la course.
+  // Persiste le rôle du jour et l'identité du leader présumé (calculés au briefing) jusqu'à l'arrivée —
+  // c'est ce qui permet à un équipier de voir le résultat de SON leader plutôt que le sien à l'arrivée.
+  if (delta.raceLeaderInfo) {
+    raceState.role = delta.raceLeaderInfo.role;
+    raceState.leaderName = delta.raceLeaderInfo.leaderName || null;
+    raceState.leaderLevel = delta.raceLeaderInfo.leaderLevel || null;
+  }
   if (delta.forceDropped) {
     raceState.group = RACE_GROUPS.DROPPED;
     raceState.energy = 5;
@@ -1523,7 +1606,10 @@ function applyDelta(game, delta = {}) {
     // la coopération des autres coureurs. Bien vu = alliances faciles, échappées qui roulent bien
     // ensemble. Mal vu = coureurs qui refusent de collaborer, échappée qui ne prend jamais.
     const pelotonCooperationModifier = ((player.reputation?.peloton || 50) - 50) * 0.0024; // ±12% max
-    if (delta.tacticalBonus >= 5 && raceState.energy > 15 && Math.random() < 0.35 + delta.tacticalBonus / 40 + pelotonCooperationModifier) {
+    // Bornée explicitement entre 5% et 95% : même avec un très gros bonus tactique, il reste toujours
+    // une petite part d'incertitude — jamais une réussite (ou un échec) mathématiquement garanti.
+    const cooperationChance = clamp01(0.35 + delta.tacticalBonus / 40 + pelotonCooperationModifier, 0.05, 0.95);
+    if (delta.tacticalBonus >= 5 && raceState.energy > 15 && Math.random() < cooperationChance) {
       raceState.group = moveGroup(raceState.group, 1);
       // Progression en cours de saison : une action tactique à fort enjeu (attaque surprise, gros pari...)
       // qui réussit vraiment peut rapporter un point de compétence bonus — plafonné pour éviter le farming.
@@ -1563,7 +1649,7 @@ function applyDelta(game, delta = {}) {
     player.reputation.sponsors = clamp(player.reputation.sponsors + 10);
   }
 
-  return { ...game, player, rivalRelation, teammates, sponsor, peloton, seasonMajorResults, tacticalBonus, talentCharges, effortAccum, raceState, recentResultTiers, seasonBonusSkillPoints };
+  return { ...game, player, rivalRelation, teammates, sponsor, peloton, seasonMajorResults, tacticalBonus, talentCharges, effortAccum, raceState, recentResultTiers, seasonBonusSkillPoints, currentGT };
 }
 
 /* ============================== DILEMMES NARRATIFS ============================== */
@@ -1656,7 +1742,15 @@ const EVENTS = [
     ] },
 
   /* ---- PASSAGE PRO ---- */
-  { id: "pro1", block: "passage_pro", text: "Tes performances en junior/espoir attirent l'attention. Des équipes te font une offre.",
+  { id: "pro1", block: "passage_pro",
+    text: (g) => {
+      const byOrigin = {
+        rural: "Une équipe continentale te propose un contrat de développement — après des années à te battre avec peu de moyens, la porte du monde professionnel s'entrouvre enfin.",
+        academie: "Une équipe WorldTour souhaite t'intégrer à son programme de jeunes — la suite logique de ton parcours en académie, mais avec elle vient tout de suite l'exigence du plus haut niveau.",
+        autodidacte: "Un recruteur t'a repéré après une performance inattendue — personne ne t'avait vu venir, mais quelque chose dans ta façon de courir a suffi à convaincre.",
+      };
+      return byOrigin[g.player.origin] || "Tes performances en junior/espoir attirent l'attention. Des équipes te font une offre.";
+    },
     choices: (g) => {
       // Une belle période de formation ouvre de meilleures portes : au-delà d'une réputation junior
       // vraiment remarquable, des ProTeams peuvent s'intéresser à toi dès le premier contrat.
@@ -1792,26 +1886,48 @@ const EVENTS = [
 ];
 
 /* ============================== VRAI CALENDRIER — COURSES EN SÉQUENCES ============================== */
-function finishChoices(specKey, raceName, extra = {}, isStageRace = false) {
+function finishChoices(specKey, raceName, extra = {}, isStageRace = false, nationalOnly = false) {
   function majorResultFor(o) {
     if (!MAJOR_RACE_NAMES.has(raceName) || !o.classification || !o.classification[0]) return undefined;
     const w = o.classification[0];
     return { raceName, winner: { id: w.id, name: w.name, nation: w.nation } };
   }
   function withJerseys(o, g, baseText) {
-    const gcPalmares = (o.palmares || []).map((label) => (isStageRace ? label.replace("Victoire —", "Classement général —") : label));
+    // Une course à étapes requalifie une victoire en classement général — on le fait maintenant sur le
+    // champ structuré resultType, plus jamais en trafiquant le texte affiché après coup.
+    const gcPalmares = (o.palmares || []).map((entry) => (isStageRace && entry.resultType === "victoire" ? buildPalmaresEntry(raceName, "victoire_gc") : entry));
     if (!isStageRace) return { text: baseText, palmares: gcPalmares, uciPoints: o.uciPoints || 0 };
     const j = applyStageRaceJerseys(g, raceName, baseText);
     return { text: j.text, palmares: [...gcPalmares, ...j.palmares], uciPoints: (o.uciPoints || 0) + j.uciPoints };
   }
+  // Rôle Équipier pur (pas Carte secondaire, pas Co-leader) : tu ne joues pas ta propre carte aujourd'hui,
+  // donc l'arrivée ne doit pas résoudre TON résultat individuel — elle doit montrer ce que devient TON
+  // LEADER, la vraie conséquence visible d'avoir bien (ou mal) fait ton travail de soutien.
+  function domestiqueFinishOutcome(g, allIn) {
+    const leaderLevel = (g.raceState?.leaderLevel || 60) + (allIn ? 4 : 0);
+    const leaderName = g.raceState?.leaderName || "ton leader";
+    const roll = rand(0, 100) + (leaderLevel - 60);
+    const tier = roll >= 85 ? "victoire" : roll >= 62 ? "podium" : roll >= 38 ? "top10" : "anonyme";
+    const texts = {
+      victoire: `Grâce à un travail collectif payant, ${leaderName} lève les bras à l'arrivée sur ${raceName} !`,
+      podium: `${leaderName} monte sur le podium de ${raceName} — ton travail en amont y est pour beaucoup.`,
+      top10: `${leaderName} termine dans le top 10 de ${raceName}, une course sans éclat particulier pour l'équipe.`,
+      anonyme: `Malgré tes efforts, ${leaderName} ne parvient pas à se montrer aujourd'hui sur ${raceName}.`,
+    };
+    const relDelta = { victoire: 6, podium: 4, top10: 1, anonyme: -1 }[tier];
+    const repDelta = { victoire: 3, podium: 2, top10: 0, anonyme: 0 }[tier];
+    return { text: texts[tier], delta: { forme: allIn ? -5 : -2, fatigue: allIn ? 11 : 6, relationEquipe: relDelta, reputation: repDelta, teammatesDelta: (tier === "victoire" || tier === "podium") ? { moral: 3 } : {}, ...extra } };
+  }
   return [
     { label: "Attaquer pour la victoire", resolve: (g) => {
-        const o = raceOutcomeVsRival(g, specKey, raceName);
+        if (g.raceState?.role === RACE_ROLES.DOMESTIQUE) return domestiqueFinishOutcome(g, true);
+        const o = raceOutcomeVsRival(g, specKey, raceName, nationalOnly);
         const r = withJerseys(o, g, o.text);
         return { text: r.text, classification: o.classification, playerPosition: o.playerPosition, fieldSize: o.fieldSize, delta: { forme: o.forme, fatigue: o.fatigue, reputation: o.reputation, palmares: r.palmares, rival: o.rivalDelta, uciPoints: r.uciPoints, pelotonPoints: o.pelotonPoints, majorResult: majorResultFor(o), resultTier: o.tier, ...extra } };
       } },
     { label: "Gérer ton effort, viser un résultat solide", resolve: (g) => {
-        const o = raceOutcomeVsRival(g, specKey, raceName);
+        if (g.raceState?.role === RACE_ROLES.DOMESTIQUE) return domestiqueFinishOutcome(g, false);
+        const o = raceOutcomeVsRival(g, specKey, raceName, nationalOnly);
         const r = withJerseys(o, g, o.text);
         return { text: r.text, classification: o.classification, playerPosition: o.playerPosition, fieldSize: o.fieldSize, delta: { forme: o.forme + 3, fatigue: o.fatigue - 3, reputation: Math.round(o.reputation * 0.7), palmares: r.palmares, rival: o.rivalDelta, uciPoints: r.uciPoints, pelotonPoints: o.pelotonPoints, majorResult: majorResultFor(o), resultTier: o.tier, ...extra } };
       } },
@@ -1879,7 +1995,7 @@ function buildNationalChampionship(player) {
           { label: "Prendre la course à ton compte", resolve: () => ({ text: "Tu assumes le rôle de favori face à tes compatriotes.", delta: { fatigue: 4 } }) },
           { label: "Rester discret, attendre le final", resolve: () => ({ text: "Tu laisses les autres animer la course avant de te positionner.", delta: { fatigue: 1 } }) },
         ] },
-      { phase: "Ligne d'arrivée", text: "Le maillot distinctif de champion national attend le vainqueur.", choices: finishChoices(specKey, raceName) },
+      { phase: "Ligne d'arrivée", text: "Le maillot distinctif de champion national attend le vainqueur.", choices: finishChoices(specKey, raceName, {}, false, true) },
     ],
   };
 }
@@ -2075,36 +2191,196 @@ const GRAND_TOUR_FLAVOR = {
   },
 };
 
+// ============================================================================
+// GRAND TOUR ENGINE V2 — un Grand Tour n'est plus une seule étape décisive, mais ~21 jours de course :
+// seuls les jours ACTIFS (montagne, contre-la-montre, étape accidentée) te demandent de vraies décisions
+// et utilisent le Race Engine V2 (groupe/énergie) comme n'importe quelle course. Les jours DE FOND sont
+// simulés en un éclair narratif — mais peuvent quand même t'offrir une victoire d'étape si ton profil
+// correspond (un sprinteur peut lever les bras sur une étape de plaine sans jamais viser le général).
+// Le classement général, les maillots annexes et les victoires d'étape s'accumulent jour après jour et
+// ne sont scellés qu'à l'arrivée finale — pas un seul jet de dés qui décide de trois semaines de course.
+// ============================================================================
+const GT_DAY_LAYOUT = [
+  { day: 1, type: "background", terrain: "sprint" },
+  { day: 2, type: "background", terrain: "vallonne" },
+  { day: 3, type: "background", terrain: "sprint" },
+  { day: 4, type: "active", terrain: "montagne" },
+  { day: 5, type: "background", terrain: "sprint" },
+  { day: 6, type: "background", terrain: "vallonne" },
+  { day: 7, type: "active", terrain: "clm" },
+  { day: 8, type: "background", terrain: "sprint" },
+  { day: 9, type: "active", terrain: "montagne" },
+  { day: 10, type: "background", terrain: "vallonne" },
+  { day: 11, type: "background", terrain: "sprint" },
+  { day: 12, type: "active", terrain: "vallonne" },
+  { day: 13, type: "background", terrain: "sprint" },
+  { day: 14, type: "active", terrain: "montagne" },
+  { day: 15, type: "background", terrain: "vallonne" },
+  { day: 16, type: "background", terrain: "sprint" },
+  { day: 17, type: "active", terrain: "montagne" },
+  { day: 18, type: "background", terrain: "sprint" },
+  { day: 19, type: "background", terrain: "sprint" },
+];
+const GT_TIER_GC_POINTS = { victoire: 40, podium: 25, top10: 10, anonyme: -5 };
+const GT_TIER_JERSEY_POINTS = { victoire: 20, podium: 12, top10: 5, anonyme: 0 };
+const GT_TIER_FORME = { victoire: 6, podium: 3, top10: 1, anonyme: -3 };
+
+// Récupération nocturne au sein du Grand Tour — un jour de course dans un GT n'est pas suivi d'une vraie
+// coupure comme entre deux courses de la saison, mais d'une nuit de récupération partielle. Sans ce
+// mécanisme, la fatigue plafonne à 100 dès le premier tiers du Tour et y reste pour le reste de la
+// course (bug confirmé en testant) — y compris sur les étapes les plus décisives de la 3e semaine.
+function gtOvernightRecovery(player) {
+  return 6 + SkillEngine.formeRecovery(player) * 0.6 + SkillEngine.fatigueResist(player) * 0.18;
+}
+
+// Finish d'une étape ACTIVE : réutilise runRaceField tel quel (donc le Race Engine V2 complet — groupe,
+// énergie, pression, tout) pour déterminer le résultat DU JOUR, puis alimente l'accumulateur du Grand
+// Tour plutôt que de payer directement palmarès/réputation/points UCI (réservés à l'arrivée finale).
+function gtStageFinishChoices(specKey, terrain, tourName) {
+  const buildResult = (extraForme) => (g) => {
+    const field = runRaceField(g, specKey, tourName);
+    const gcPoints = GT_TIER_GC_POINTS[field.tier];
+    const jerseyPoints = GT_TIER_JERSEY_POINTS[field.tier];
+    const komPoints = terrain === "montagne" ? jerseyPoints : 0;
+    const pointsPoints = (terrain === "sprint" || terrain === "vallonne") ? jerseyPoints : 0;
+    const stageWin = field.tier === "victoire" ? [buildPalmaresEntry(tourName, "victoire_etape")] : [];
+    const texts = { victoire: "Tu lèves les bras : victoire d'étape !", podium: "Tu montes sur le podium du jour, une belle opération pour le général.", top10: "Un discret top 10 aujourd'hui, sans éclat mais sans dégâts.", anonyme: "Une étape difficile, tu perds du temps sur les meilleurs." };
+    return { text: texts[field.tier], classification: field.top10, playerPosition: field.playerPosition, fieldSize: field.fieldSize, delta: { forme: GT_TIER_FORME[field.tier] + extraForme, fatigue: Math.round(12 - gtOvernightRecovery(g.player)), reputation: Math.round(jerseyPoints * 0.3), palmares: stageWin, gtUpdate: { gcPoints, komPoints, pointsPoints } } };
+  };
+  return [
+    { label: "Attaquer pour la victoire d'étape", resolve: buildResult(0) },
+    { label: "Gérer ton effort, viser le classement général", resolve: buildResult(2) },
+  ];
+}
+
+// Étape ACTIVE : structure identique à une course normale (choix tactique + finish), avec le Race Engine V2
+// complet (groupe/énergie remis à zéro pour cette étape, comme n'importe quelle course).
+function buildGTActiveStage(dayInfo, tourName, flavor, usedClimbs) {
+  const templates = {
+    montagne: () => {
+      const options = [flavor.montagne.main, ...flavor.montagne.alt].filter((c) => !usedClimbs.includes(c.name));
+      const climb = options.length > 0 ? pick(options) : pick([flavor.montagne.main, ...flavor.montagne.alt]);
+      usedClimbs.push(climb.name);
+      return { specKey: "montagne", phase: `Étape ${dayInfo.day} — Ascension ${climb.de}`,
+        text: (g) => `Le peloton explose sur les pentes ${climb.de}. ${getRival(g).name} place une première accélération.${raceContextLine(g, tourName)}`,
+        choiceA: "Attaquer dans la dernière ascension", choiceB: "Gérer ton effort pour le général" };
+    },
+    clm: () => ({ specKey: "clm", phase: `Étape ${dayInfo.day} — Contre-la-montre individuel`,
+      text: (g) => `Position aérodynamique, réglages du vélo : tout se joue dans les détails pour ${flavor.clm.location}. ${getRival(g).name} vient de s'élancer deux minutes devant toi.${raceContextLine(g, tourName)}`,
+      choiceA: "Partir à bloc dès le départ", choiceB: "Gérer ton effort sur la distance" }),
+    vallonne: () => ({ specKey: "sprint", phase: `Étape ${dayInfo.day} — Étape accidentée`,
+      text: (g) => `Une succession de bosses courtes et sèches rend cette étape idéale pour les puncheurs. ${getRival(g).name} guette la bonne échappée.${raceContextLine(g, tourName)}`,
+      choiceA: "Te placer dans le bon coup dès le début", choiceB: "Attendre le final pour te positionner" }),
+  };
+  const t = templates[dayInfo.terrain]();
+  return {
+    phase: t.phase, text: t.text,
+    choices: [
+      { label: t.choiceA, resolve: () => ({ text: "Tu places ton effort tôt, quitte à en payer le prix plus tard.", delta: { fatigue: 5, tacticalBonus: 7 } }) },
+      { label: t.choiceB, resolve: () => ({ text: "Tu restes patient, économe, prêt à frapper au bon moment.", delta: { fatigue: 2 } }) },
+    ],
+    finish: { phase: `${t.phase} — Arrivée`, text: "Les derniers hectomètres avant la ligne, tout reste à jouer.", choices: gtStageFinishChoices(t.specKey, dayInfo.terrain, tourName) },
+  };
+}
+
+// Étape DE FOND : un éclair narratif, une seule décision. La plupart du temps sans conséquence sur le
+// général, mais une vraie chance de victoire d'étape pour un profil adapté (sprinteur sur le plat,
+// puncheur sur le vallonné) — comme dans la vraie vie, où la majorité des étapes de sprint se jouent
+// justement sur ces journées de transition, pas sur les étapes reines.
+function buildGTBackgroundStage(dayInfo, tourName) {
+  const specKey = dayInfo.terrain === "sprint" ? "sprint" : "montagne";
+  const label = dayInfo.terrain === "sprint" ? "de plaine, promise à un sprint massif" : "vallonnée, avec quelques difficultés à négocier";
+  return {
+    phase: `Étape ${dayInfo.day}`,
+    text: () => `Étape ${dayInfo.day} : une journée ${label}. Tu roules dans le peloton, sans prendre de risque inutile — sauf si une occasion se présente.`,
+    choices: [
+      { label: "Continuer", resolve: (g) => {
+          const score = performanceScore(g.player, specKey, 0);
+          const winChance = dayInfo.terrain === "sprint" ? (score > 100 ? 0.18 : score > 85 ? 0.07 : score > 70 ? 0.02 : 0) : (score > 95 ? 0.1 : score > 80 ? 0.03 : 0);
+          const won = Math.random() < winChance;
+          const gcPoints = won ? 5 : Math.round((score - 75) / 20);
+          const pointsPoints = dayInfo.terrain === "sprint" && won ? 15 : dayInfo.terrain === "sprint" ? 2 : 0;
+          const text = won ? `Étape ${dayInfo.day} : tu profites de cette journée tranquille pour lever les bras à l'arrivée !` : `Étape ${dayInfo.day} : journée sans histoire, le peloton reste groupé. Aucun changement notable au classement général.`;
+          return { text, delta: { fatigue: Math.round(6 - gtOvernightRecovery(g.player)), forme: won ? 3 : 0, palmares: won ? [buildPalmaresEntry(tourName, "victoire_etape")] : [], gtUpdate: { gcPoints, pointsPoints } } };
+        } },
+    ],
+  };
+}
+
+// Habillage d'entrée — pour que le joueur sente immédiatement qu'il aborde quelque chose de différent
+// d'une course normale, avant même la première étape.
+function buildGTIntroStage(tourName, kind) {
+  const activeDays = GT_DAY_LAYOUT.filter((d) => d.type === "active").length;
+  return {
+    phase: "🏆 GRAND DÉPART",
+    text: (g) => `${tourName} — ${GT_DAY_LAYOUT.length + 2} jours de course, trois semaines de bataille. ${activeDays} journées décisives t'attendent (montagne, contre-la-montre, étape accidentée) : c'est là que se jouera vraiment ton général. Le reste, ce sont des étapes de transition — l'occasion, pour les profils adaptés, de chiper une victoire d'étape au passage.${raceContextLine(g, tourName)}`,
+    choices: [{ label: "C'est parti pour trois semaines de course", resolve: () => ({ text: "Le peloton s'élance pour le grand départ.", delta: { gtUpdate: { reset: true, tourName, kind, totalDays: GT_DAY_LAYOUT.length + 2 } } }) }],
+  };
+}
+
+function gtFinalTier(score, thresholds) {
+  if (score >= thresholds.victoire) return "victoire";
+  if (score >= thresholds.podium) return "podium";
+  if (score >= thresholds.top10) return "top10";
+  return "anonyme";
+}
+
+// Arrivée finale — scelle le classement général ET les maillots annexes à partir de ce qui s'est
+// RÉELLEMENT accumulé jour après jour, pas un jet de dés isolé.
+function buildGTFinalStage(tourName, kind) {
+  return {
+    phase: "🏁 Arrivée finale à Paris",
+    text: () => `Dernière étape du ${tourName} — le classement général est sur le point d'être scellé après trois semaines de course.`,
+    choices: [
+      { label: "Voir le classement final", resolve: (g) => {
+          const gt = g.currentGT || { gcScore: 0, komScore: 0, pointsScore: 0 };
+          const gcTier = gtFinalTier(gt.gcScore, { victoire: 150, podium: 95, top10: 45 });
+          const komTier = gtFinalTier(gt.komScore, { victoire: 45, podium: 25, top10: 10 });
+          const pointsTier = gtFinalTier(gt.pointsScore, { victoire: 45, podium: 25, top10: 10 });
+          const palmares = [];
+          if (gcTier === "victoire") palmares.push(buildPalmaresEntry(tourName, "victoire_gc"));
+          else if (gcTier === "podium") palmares.push(buildPalmaresEntry(tourName, "podium"));
+          else if (gcTier === "top10") palmares.push(buildPalmaresEntry(tourName, "top10"));
+          if (komTier === "victoire") palmares.push(buildPalmaresEntry(tourName, "maillot_pois"));
+          if (pointsTier === "victoire") palmares.push(buildPalmaresEntry(tourName, "maillot_points"));
+          if (g.player.age < YOUTH_AGE_LIMIT && (gcTier === "victoire" || gcTier === "podium")) palmares.push(buildPalmaresEntry(tourName, "maillot_jeune"));
+          const reputation = { victoire: 45, podium: 28, top10: 14, anonyme: 3 }[gcTier];
+          const uciPoints = { victoire: 100, podium: 65, top10: 30, anonyme: 8 }[gcTier];
+          const texts = { victoire: `Tu remportes le classement général du ${tourName} ! Le sommet du cyclisme mondial.`, podium: `Tu montes sur le podium final du ${tourName} — une très belle performance sur trois semaines.`, top10: `Tu termines dans le top 10 du classement général du ${tourName}.`, anonyme: `Tu termines ce ${tourName} loin du classement général, mais l'expérience de trois semaines de course reste précieuse.` };
+          const rival = getRival(g);
+          const majorResult = MAJOR_RACE_NAMES.has(tourName) ? { raceName: tourName, winner: gcTier === "victoire" ? { id: "player", name: g.player.name } : (rival ? { id: rival.id, name: rival.name } : { id: "field", name: "un coureur du peloton" }) } : undefined;
+          // Trois semaines de course laissent une vraie trace durable — la fatigue chronique augmente,
+          // proportionnellement à l'état de fatigue avec lequel tu termines le Tour (une course bien
+          // gérée jusqu'au bout laisse moins de séquelles qu'une fin de Tour au bord de la rupture).
+          const chronicToll = Math.round(8 + Math.max(0, g.player.stats.fatigue - 50) * 0.2);
+          return { text: texts[gcTier], delta: { forme: -4, fatigue: 8, fatigueChronique: chronicToll, reputation, uciPoints, palmares, majorResult, gtUpdate: { clear: true } } };
+        } },
+    ],
+  };
+}
+
 function buildGrandTourRace(tourName, kind) {
   const flavor = GRAND_TOUR_FLAVOR[tourName] || GRAND_TOUR_FLAVOR["Tour de France"];
-  // Le col principal revient un peu plus souvent (c'est LE juge de paix de ce tour), les alternatives
-  // apportent de la variété d'une saison à l'autre sans jamais être totalement génériques.
-  const climb = Math.random() < 0.4 ? flavor.montagne.main : pick(flavor.montagne.alt);
-  const templates = {
-    montagne: { specKey: "montagne", phase1: `Ascension ${climb.de}`, text1: (g) => `Le peloton explose sur les pentes ${climb.de}, l'un des juges de paix du ${tourName}. ${getRival(g).name} place une première accélération.${raceContextLine(g, tourName)}`,
-      choiceA: "Attaquer dans la dernière ascension", choiceB: "Gérer ton effort pour le général",
-      finalPhase: `Arrivée au sommet ${climb.de}`, finalText: `Les derniers hectomètres avant la ligne, sur les pentes ${climb.de}.` },
-    clm: { specKey: "clm", phase1: "Vérification matérielle avant le départ", text1: (g) => `Position aérodynamique, réglages du vélo : tout se joue dans les détails pour ${flavor.clm.location}. ${getRival(g).name} vient de s'élancer deux minutes devant toi.${raceContextLine(g, tourName)}`,
-      choiceA: "Partir à bloc dès le départ", choiceB: "Gérer ton effort sur la distance",
-      finalPhase: "Dernier tronçon chronométré", finalText: `Les derniers kilomètres pour ${flavor.clm.location}, seul face au chrono.` },
-    sprint: { specKey: "sprint", phase1: "Mise en place du train de sprint", text1: (g) => `L'équipe s'organise pour te lancer au sprint avant ${flavor.sprint.location}. ${getRival(g).name} est aussi bien placé, à l'affût.${raceContextLine(g, tourName)}`,
-      choiceA: "Te lancer tôt, prendre les devants", choiceB: "Rester dans la roue jusqu'aux 200 derniers mètres",
-      finalPhase: "Sprint massif", finalText: `Les derniers hectomètres avant ${flavor.sprint.location}, tout se joue maintenant.` },
-  };
-  const t = templates[kind];
+  const usedClimbs = [];
+  const stages = [buildGTIntroStage(tourName, kind)];
+  GT_DAY_LAYOUT.forEach((dayInfo) => {
+    if (dayInfo.type === "active") {
+      const active = buildGTActiveStage(dayInfo, tourName, flavor, usedClimbs);
+      stages.push({ phase: active.phase, text: active.text, choices: active.choices });
+      stages.push(active.finish);
+    } else {
+      stages.push(buildGTBackgroundStage(dayInfo, tourName));
+    }
+  });
+  stages.push(buildGTFinalStage(tourName, kind));
   return {
     id: `gt_${kind}_${Math.random().toString(36).slice(2, 7)}`,
     name: `${tourName} — étape décisive`,
     raceTier: "WT",
     isStageRace: true,
-    stages: [
-      { phase: t.phase1, text: t.text1,
-        choices: [
-          { label: t.choiceA, resolve: () => ({ text: "Tu places ton effort tôt, quitte à en payer le prix plus tard.", delta: { fatigue: 5 } }) },
-          { label: t.choiceB, resolve: () => ({ text: "Tu restes patient, économe, prêt à frapper au bon moment.", delta: { fatigue: 2 } }) },
-        ] },
-      { phase: t.finalPhase, text: t.finalText, choices: finishChoices(t.specKey, `${tourName}`, {}, true) },
-    ],
+    isGrandTour: true,
+    totalGTDays: GT_DAY_LAYOUT.length + 2,
+    stages,
   };
 }
 
@@ -2208,7 +2484,7 @@ const INCIDENT_POOL = [
           const handlingMitigation = bikeHandlingSkill(ctx.game.player) * 0.02;
           if (roll < Math.max(0.015, 0.07 - mentalMitigation - handlingMitigation)) {
             // Chute grave : blessure, la course s'arrête ici pour toi (résultat forcé au plus bas).
-            return { text: "Tu perds le contrôle dans un virage serré. La chute est sérieuse — ta course s'arrête ici, et il va falloir du temps pour t'en remettre.", delta: { forme: -25, fatigue: -30, fatigueChronique: -20, reputation: -4, flags: { recentInjury: true }, forceDropped: true } };
+            return { text: "Tu perds le contrôle dans un virage serré. La chute est sérieuse — ta course s'arrête ici, et il va falloir du temps pour t'en remettre.", delta: { forme: -25, fatigue: -30, fatigueChronique: -20, reputation: -4, flags: { hadMajorInjury: true }, forceDropped: true } };
           }
           if (roll < Math.max(0.10, 0.22 - handlingMitigation)) {
             // Chute superficielle : plus de peur que de mal, mais du temps et de l'énergie perdus.
@@ -2235,8 +2511,8 @@ const INCIDENT_POOL = [
     },
     text: () => "Une chute sérieuse, dans un moment de fatigue extrême où tes réflexes n'étaient plus tout à fait là. Le diagnostic tombe : une blessure qui va t'écarter des routes plusieurs semaines.",
     choices: () => [
-      { label: "Accepter la pause forcée et bien récupérer", resolve: () => ({ text: "Tu prends le temps nécessaire pour guérir correctement, sans précipiter les choses.", delta: { forme: -25, fatigue: -30, fatigueChronique: -20, reputation: -4, flags: { recentInjury: true } } }) },
-      { label: "Revenir le plus vite possible, quitte à forcer", resolve: () => ({ text: "Tu précipites ton retour à la compétition — risqué, mais tu limites la casse sur ta saison.", delta: { forme: -32, fatigue: -8, reputation: -2, flags: { recentInjury: true } } }) },
+      { label: "Accepter la pause forcée et bien récupérer", resolve: () => ({ text: "Tu prends le temps nécessaire pour guérir correctement, sans précipiter les choses.", delta: { forme: -25, fatigue: -30, fatigueChronique: -20, reputation: -4, flags: { hadMajorInjury: true } } }) },
+      { label: "Revenir le plus vite possible, quitte à forcer", resolve: () => ({ text: "Tu précipites ton retour à la compétition — risqué, mais tu limites la casse sur ta saison.", delta: { forme: -32, fatigue: -8, reputation: -2, flags: { hadMajorInjury: true } } }) },
     ],
   },
   {
@@ -2604,14 +2880,14 @@ function buildBriefingStage(game, raceObj) {
       phase: "Briefing du DS",
       text: `${director} annonce que ${challenger.name} sera leader aujourd'hui — tes derniers résultats ne suffisent pas encore à le convaincre de te préférer.`,
       choices: [
-        { label: "Accepter le rôle et te mettre au service de l'équipe", resolve: () => ({ text: `Tu rentres dans le rang sans faire d'histoires. ${director} apprécie ton professionnalisme.`, delta: { relationEquipe: 5 } }) },
+        { label: "Accepter le rôle et te mettre au service de l'équipe", resolve: () => ({ text: `Tu rentres dans le rang sans faire d'histoires. ${director} apprécie ton professionnalisme.`, delta: { relationEquipe: 5, raceLeaderInfo: { role, leaderName: challenger.name, leaderLevel: challenger.level } } }) },
         { label: "Réclamer ta chance auprès du DS", resolve: (g) => {
             const won = g.player.reputation.peloton >= (challenger.standing - 20);
             return won
-              ? { text: `${director} accepte de te laisser une carte à jouer, à condition de ne pas nuire à ${challenger.name}.`, delta: { relationEquipe: -2, tacticalBonus: 3 } }
-              : { text: `${director} refuse net : "${challenger.name} a fait ses preuves, pas toi. Encore."`, delta: { relationEquipe: -5 } };
+              ? { text: `${director} accepte de te laisser une carte à jouer, à condition de ne pas nuire à ${challenger.name}.`, delta: { relationEquipe: -2, tacticalBonus: 3, raceLeaderInfo: { role: RACE_ROLES.CARTE, leaderName: challenger.name, leaderLevel: challenger.level } } }
+              : { text: `${director} refuse net : "${challenger.name} a fait ses preuves, pas toi. Encore."`, delta: { relationEquipe: -5, raceLeaderInfo: { role, leaderName: challenger.name, leaderLevel: challenger.level } } };
           } },
-        { label: "Te mettre pleinement au service de " + challenger.name, resolve: () => ({ text: `Tu t'engages sans réserve derrière ${challenger.name} — ce genre de loyauté ne s'oublie pas dans un vestiaire.`, delta: { relationEquipe: 8, teammatesDelta: { moral: 4 } } }) },
+        { label: "Te mettre pleinement au service de " + challenger.name, resolve: () => ({ text: `Tu t'engages sans réserve derrière ${challenger.name} — ce genre de loyauté ne s'oublie pas dans un vestiaire.`, delta: { relationEquipe: 8, teammatesDelta: { moral: 4 }, raceLeaderInfo: { role: RACE_ROLES.DOMESTIQUE, leaderName: challenger.name, leaderLevel: challenger.level } } }) },
       ],
       role,
     };
@@ -2622,7 +2898,7 @@ function buildBriefingStage(game, raceObj) {
     return {
       phase: "Briefing du DS",
       text: `${director} hésite encore entre toi et ${challenger.name} pour le leadership aujourd'hui — vos formes sont trop proches pour trancher à l'avance. La course décidera.`,
-      choices: [{ label: "Compris, à toi de le prouver sur la route", resolve: () => ({ text: "Tu prends le départ sachant que rien n'est acquis.", delta: {} }) }],
+      choices: [{ label: "Compris, à toi de le prouver sur la route", resolve: () => ({ text: "Tu prends le départ sachant que rien n'est acquis.", delta: { raceLeaderInfo: { role, leaderName: challenger.name, leaderLevel: challenger.level } } }) }],
       role,
     };
   }
@@ -2630,12 +2906,19 @@ function buildBriefingStage(game, raceObj) {
   return {
     phase: "Briefing du DS",
     text: baseText,
-    choices: [{ label: "Compris", resolve: () => ({ text: "Tu prends ta place dans le peloton, rôle en tête.", delta: {} }) }],
+    choices: [{ label: "Compris", resolve: () => ({ text: "Tu prends ta place dans le peloton, rôle en tête.", delta: { raceLeaderInfo: { role, leaderName: presumedLeader?.name, leaderLevel: presumedLeader?.level } } }) }],
     role,
   };
 }
 
 function injectDynamicIncidents(raceObj, game) {
+  // Un Grand Tour a déjà sa propre structure interne complète (habillage, étapes actives, arrivée finale)
+  // — pas besoin (et pas de sens) d'y plaquer par-dessus le traitement météo/briefing/imprévus générique
+  // conçu pour une course d'un jour. On calcule quand même le rôle, dont dépendent certains choix tactiques.
+  if (raceObj.isGrandTour) {
+    const { role } = computeRaceRole(game, raceObj);
+    return { ...raceObj, role };
+  }
   const meta = CALENDAR_META[raceObj.name] || {};
   const weather = rollWeather(meta);
   // Le briefing (et donc le rôle du jour) est calculé en premier, pour que les imprévus puissent
@@ -2768,15 +3051,46 @@ function initialPlayer(form) {
     festif: { fatigue: 30, ethique: 50, rep: 35 },
   }[form.lifestyle];
 
+  // L'origine a un vrai impact mécanique, mais SANS faire de la réputation le facteur dominant — sinon
+  // "Académie" deviendrait mathématiquement la meilleure origine, "Autodidacte" la pire, ce qui tuerait
+  // l'intérêt du choix. L'écart de réputation reste donc volontairement modeste ; l'essentiel de la
+  // différenciation passe par d'autres leviers, chacun avec sa propre logique thématique :
+  // - Club rural : peu vu au départ, mais une vraie résilience — encaisse mieux les coups durs.
+  // - Académie : un peu plus vu, un encadrement technique précoce, une relation DS facilitée — mais
+  //   des attentes plus élevées : la pression est plus forte, et les échecs coûtent un peu plus cher.
+  // - Autodidacte : "Talent brut" — un profil de spécialité déséquilibré mais prometteur (fort d'un
+  //   côté, plus faible ailleurs), le moins de soutien initial, une progression qui dépend surtout
+  //   de ses propres choix (les gains de spécialité en cours de carrière y sont amplifiés).
+  const originStats = {
+    rural: { repMod: -3, ethiqueMod: 8, relMod: 0 },
+    academie: { repMod: 4, ethiqueMod: 0, relMod: 8 },
+    autodidacte: { repMod: -5, ethiqueMod: 3, relMod: -5 },
+  }[form.origin] || { repMod: 0, ethiqueMod: 0, relMod: 0 };
+  const baseRep = Math.max(5, lifestyleStats.rep + originStats.repMod);
+
+  if (form.origin === "academie" && boostKey) baseSpec[boostKey] += 8;
+  const originFlags = {};
+  if (form.origin === "rural") originFlags.originRural = true;
+  if (form.origin === "academie") originFlags.originAcademie = true;
+  if (form.origin === "autodidacte") {
+    // Talent brut : un profil taillé pour sa spécialité, mais moins complet ailleurs — la nature même
+    // d'un talent formé seul, sans le socle généraliste d'un encadrement structuré.
+    originFlags.originAutodidacte = true;
+    if (boostKey) baseSpec[boostKey] += 8;
+    const otherKeys = Object.keys(baseSpec).filter((k) => k !== boostKey);
+    const weakKey = pick(otherKeys);
+    baseSpec[weakKey] = clamp(baseSpec[weakKey] - 4);
+  }
+
   return {
     name: form.name, nation: form.nation, origin: form.origin, specialtyPrimary: form.specialtyPrimary, lifestyle: form.lifestyle,
     age: 16, seasonNumber: 1, phase: "formation",
     team: null, role: "espoir", money: 0, skillPoints: 0, unlockedSkills: [], uciPoints: 0,
-    stats: { forme: 55, fatigue: lifestyleStats.fatigue, fatigueChronique: 12, motivation: 75, relationEquipe: 50, ethique: lifestyleStats.ethique },
-    reputation: { fans: Math.round(lifestyleStats.rep * 0.7), peloton: lifestyleStats.rep, sponsors: Math.round(lifestyleStats.rep * 0.5), medias: Math.round(lifestyleStats.rep * 0.8) },
+    stats: { forme: 55, fatigue: lifestyleStats.fatigue, fatigueChronique: 12, motivation: 75, relationEquipe: clamp(50 + originStats.relMod), ethique: clamp(lifestyleStats.ethique + originStats.ethiqueMod) },
+    reputation: { fans: Math.round(baseRep * 0.7), peloton: baseRep, sponsors: Math.round(baseRep * 0.5), medias: Math.round(baseRep * 0.8) },
     specialties: baseSpec,
     palmares: [], history: [`16 ans — débute le cyclisme en ${ORIGINS.find((o) => o.id === form.origin)?.label.toLowerCase()}.`],
-    flags: {}, retired: false,
+    flags: originFlags, retired: false,
   };
 }
 
@@ -2803,8 +3117,8 @@ function promoteToPro(game, team) {
 
 function verdictFor(player) {
   if (player.flags?.careerEndingInjury) return "Carrière brisée avant d'avoir commencé";
-  const wins = player.palmares.filter((p) => p.label.startsWith("Victoire")).length;
-  const podiums = player.palmares.filter((p) => p.label.startsWith("Podium")).length;
+  const wins = player.palmares.filter((p) => p.resultType === "victoire" || p.resultType === "victoire_etape").length;
+  const podiums = player.palmares.filter((p) => p.resultType === "podium").length;
   if (wins >= 6) return "Légende du peloton";
   if (wins >= 3) return "Grand nom du cyclisme";
   if (wins >= 1 || podiums >= 3) return "Coureur pro accompli";
@@ -2816,11 +3130,11 @@ function verdictFor(player) {
 // longévité, aucune nouvelle statistique stockée. Pas de note pour une carrière interrompue avant le début.
 function computeCareerScore(player) {
   if (player.flags?.careerEndingInjury) return null;
-  const wins = player.palmares.filter((p) => /^(Victoire|Classement général)/.test(p.label)).length;
-  const podiums = player.palmares.filter((p) => p.label.startsWith("Podium")).length;
-  const monumentWins = player.palmares.filter((p) => /^(Victoire|Classement général)/.test(p.label) && [...MONUMENTS].some((m) => p.label.includes(m))).length;
-  const jerseys = player.palmares.filter((p) => p.label.startsWith("Maillot")).length;
-  const worldsWin = player.palmares.some((p) => p.label.includes("Championnats du Monde") && p.label.startsWith("Victoire"));
+  const wins = player.palmares.filter((p) => p.resultType === "victoire" || p.resultType === "victoire_etape").length;
+  const podiums = player.palmares.filter((p) => p.resultType === "podium").length;
+  const monumentWins = player.palmares.filter((p) => (p.resultType === "victoire" || p.resultType === "victoire_etape") && p.isMonument).length;
+  const jerseys = player.palmares.filter((p) => p.resultType === "maillot").length;
+  const worldsWin = player.palmares.some((p) => p.isWorlds && p.resultType === "victoire");
   let score = wins * 4 + podiums * 2 + monumentWins * 6 + jerseys * 3 + (worldsWin ? 15 : 0);
   score += Math.round((player.reputation?.peloton || 0) * 0.3);
   score += Math.min(15, (player.seasonNumber || 1) * 1.5); // bonus de longévité, plafonné
@@ -2890,10 +3204,10 @@ function generateEpilogue(player, choice, rival) {
 const BLOCK_LABEL = { junior: "Formation", passage_pro: "Passage professionnel", hiver: "Préparation hivernale", classiques: "Classiques de printemps", coeur: "Cœur de saison", fin: "Fin de saison" };
 
 /* ============================== UI HELPERS ============================== */
-const Bar = ({ label, value, color }) => (
+const Bar = ({ label, value, color, term }) => (
   <div style={{ marginBottom: 8 }}>
     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.inkMuted, marginBottom: 3, letterSpacing: 0.5, textTransform: "uppercase" }}>
-      <span>{label}</span><span>{value}</span>
+      <span>{label}{term && <InfoTip term={term} />}</span><span>{value}</span>
     </div>
     <div style={{ height: 6, background: T.line, borderRadius: 4, overflow: "hidden" }}>
       <div style={{ width: `${clamp(value)}%`, height: "100%", background: color, transition: "width .4s ease" }} />
@@ -2901,6 +3215,91 @@ const Bar = ({ label, value, color }) => (
   </div>
 );
 const Card = ({ children, style }) => (<div style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 10, padding: 16, ...style }}>{children}</div>);
+
+// Glossaire centralisé — un seul endroit à mettre à jour si un terme doit être reformulé, plutôt que
+// des explications éparpillées dans toute l'interface.
+const GLOSSARY = {
+  forme: { title: "Forme", text: "Ton niveau de fraîcheur physique du moment. Plus elle est haute, plus tu performes en course. Elle baisse avec l'effort et remonte avec le repos et l'intersaison." },
+  fatigue: { title: "Fatigue récente", text: "L'usure accumulée depuis tes dernières courses. Une fatigue élevée pénalise directement ta performance. Elle redescend entre deux activités — mais mal gérée, elle laisse des traces durables (fatigue chronique)." },
+  fatigueChronique: { title: "Fatigue chronique / surmenage", text: "Contrairement à la fatigue récente, celle-ci ne part pas vite. Elle s'accumule quand tu ne récupères jamais assez entre les efforts. Au-delà d'un certain seuil, tu es en surmenage : tes performances chutent nettement, et le risque de blessure grave augmente. Un calendrier plus léger et l'intersaison la font redescendre." },
+  motivation: { title: "Motivation", text: "Ton état d'esprit du moment. Une motivation basse peut peser sur tes performances et tes décisions. Les bons résultats, les objectifs atteints et un bon relationnel avec ton équipe la font remonter." },
+  relationEquipe: { title: "Relation équipe", text: "La confiance entre toi et ton encadrement (DS, staff, équipiers). Une bonne relation t'ouvre des rôles de leader et de meilleures conditions ; une relation dégradée peut te coûter ta place dans la hiérarchie de l'équipe." },
+  ethique: { title: "Éthique", text: "Ton intégrité sportive. Des choix douteux peuvent te faire progresser plus vite à court terme, mais une éthique durablement basse t'expose à un vrai risque de scandale médiatique." },
+  reputationPeloton: { title: "Réputation — Peloton", text: "Ce que les autres coureurs pensent de toi. Bien vu, tu bénéficies d'alliances plus faciles et d'échappées qui roulent mieux ensemble. Mal vu, certains coureurs refusent de collaborer avec toi en course." },
+  reputationFans: { title: "Réputation — Fans", text: "Ta popularité auprès du public. Elle influence les sponsors et peut se retourner contre toi (chahut sur le bord des routes) si elle chute trop bas." },
+  reputationMedias: { title: "Réputation — Médias", text: "Ta visibilité et ton statut auprès de la presse spécialisée. Elle influence la pression que tu ressens dans les grandes courses (plus on attend de toi, plus la pression monte)." },
+  reputationSponsors: { title: "Réputation — Sponsors", text: "La confiance de tes partenaires financiers. Elle influence la qualité des primes et objectifs qu'ils te fixent." },
+  fraicheur: { title: "Fraîcheur", text: "Une lecture combinée de ta fatigue récente ET chronique — l'indicateur le plus simple pour savoir si tu es prêt(e) à enchaîner ou s'il vaut mieux lever le pied." },
+  currentRating: { title: "Niveau actuel", text: "Une note sur 100 qui résume ta force du moment (physique + forme + réputation + résultats récents) — façon jeu de sport. Elle évolue en permanence, contrairement à la note de fin de carrière qui, elle, mesure ton héritage cumulé." },
+  specialty: { title: "Spécialités", text: "Tes aptitudes dans chaque type de terrain : montagne, sprint, contre-la-montre (CLM), pavés. Elles déterminent sur quel genre de course tu es le plus dangereux — et évoluent avec l'entraînement, les compétences et certains événements de carrière." },
+  skillPoints: { title: "Points de compétence", text: "La monnaie qui te permet de débloquer des compétences dans l'arbre. Tu en gagnes 2 par saison, plus quelques bonus rares en cours de saison pour de très bonnes performances." },
+  raceGroup: { title: "Groupe de course", text: "Ta position dans la course à un instant donné (tête de course, peloton principal, groupe des poursuivants, décroché). C'est un vrai plafond : un coureur décroché ne peut jamais dépasser un coureur en tête, quel que soit son niveau — il faut d'abord remonter." },
+  raceEnergy: { title: "Énergie", text: "Ta réserve d'effort pour la course en cours. Chaque décision tactique en consomme. À sec, tu ne peux plus tenter de monter en groupe et risques même de décrocher." },
+  pressure: { title: "Pression", text: "L'enjeu ressenti sur une course précise (médiatisation, statut de favori, attentes de ton équipe...). Une pression forte pénalise ta performance, sauf si ton mental (compétences dédiées) l'atténue." },
+  gcVirtuel: { title: "Général virtuel", text: "Ton classement général provisoire pendant un Grand Tour, construit jour après jour. Rien n'est joué avant l'arrivée finale — un coup dur en 3e semaine peut encore tout changer." },
+};
+
+// Guide "Comment jouer" — volontairement très court par rubrique (pas un manuel), toujours structuré
+// en 3 questions : c'est quoi, à quoi ça sert, qu'est-ce que je dois faire.
+const GUIDE_SECTIONS = [
+  { icon: "🚴", title: "Comment fonctionne une course ?",
+    what: "Chaque course se déroule en plusieurs étapes : un briefing (ton rôle du jour), parfois la météo ou un imprévu, puis des choix tactiques, et enfin l'arrivée.",
+    why: "Tes choix pendant la course déterminent ton groupe (tête de course, peloton, décroché) — et ce groupe est un vrai plafond : impossible de gagner si tu es décroché, même avec un excellent niveau.",
+    do: "Regarde ton énergie avant d'attaquer : une action tactique en consomme. Économise-la pour le bon moment plutôt que de tout donner dès le départ." },
+  { icon: "⚡", title: "Fatigue & forme",
+    what: "La Forme, c'est ta fraîcheur du moment. La Fatigue récente s'accumule course après course. La Fatigue chronique, elle, ne part pas vite — c'est l'usure de fond.",
+    why: "Une fatigue élevée te fait moins bien performer. Une fatigue chronique trop haute mène au surmenage : grosse perte de performance, et un vrai risque de blessure.",
+    do: "N'enchaîne pas les courses difficiles sans respirer. Un calendrier plus léger de temps en temps permet de tout faire redescendre." },
+  { icon: "🌳", title: "Compétences",
+    what: "Un arbre de compétences en plusieurs branches (Physique, Mental, Tactique, Carrière, Spécialisation...) que tu débloques avec des points gagnés chaque saison.",
+    why: "Chaque branche joue un rôle différent : la Tactique aide à monter en tête de course, le Physique renforce tes spécialités, le Mental t'aide sous pression.",
+    do: "Ne mise pas tout sur une seule branche. Un peu de Tactique change vraiment la donne, même pour un profil orienté pur physique." },
+  { icon: "👥", title: "Équipe & équipiers",
+    what: "Tu appartiens à une équipe (Continentale, ProTeam ou WorldTour) avec un DS et des équipiers ayant chacun leur niveau, leur ambition et leur moral.",
+    why: "Ton rôle du jour (Leader, Équipier, Carte secondaire...) dépend de ta réputation face à tes coéquipiers. Un équipier plus fort que toi peut te passer devant dans la hiérarchie.",
+    do: "En rôle Équipier, utilise les choix dédiés (ravitaillement, emmener ton leader) — ça construit ta relation avec l'équipe, même sans résultat personnel." },
+  { icon: "⭐", title: "Réputation",
+    what: "Quatre dimensions séparées : Peloton (les autres coureurs), Fans (le public), Médias, Sponsors.",
+    why: "Une bonne réputation Peloton facilite les alliances en course. Une mauvaise réputation peut te faire chahuter, ou pousser des coureurs à refuser de collaborer avec toi.",
+    do: "Le fair-play et les bons résultats la font monter. Attention : elle s'estompe aussi avec le temps si tu n'entretiens pas tes bons résultats." },
+  { icon: "💼", title: "Contrats & carrière",
+    what: "Chaque fin de saison (ou fin de contrat), tu négocies avec des équipes : rôle garanti, prime de victoire, durée, clause de sortie.",
+    why: "Un contrat long te met à l'abri du mercato pendant plusieurs saisons, mais t'engage. Un contrat court laisse plus de liberté mais moins de sécurité.",
+    do: "Un début de carrière modeste ? Vise le rôle garanti pour construire ton palmarès. Déjà confirmé ? La prime de victoire peut rapporter gros." },
+  { icon: "📅", title: "Calendrier",
+    what: "En début de saison, tu construis ton calendrier : classiques, courses de préparation, Grand Tour (optionnel !), championnats.",
+    why: "Chaque course a un profil de terrain différent (montagne, sprint, pavés...) qui favorise certains profils. Un Grand Tour est optionnel — une carrière 100% classiques est un choix valable.",
+    do: "Regarde le profil de terrain affiché sous chaque course avant de la choisir — il te dit directement si elle te correspond." },
+  { icon: "⚔️", title: "Rivalités",
+    what: "Un rival t'accompagne tout au long de ta carrière, avec une relation Haine/Respect qui évolue selon vos confrontations.",
+    why: "C'est purement narratif au départ, mais ça colore vraiment ta carrière — victoires, défaites et transferts marquent votre histoire commune.",
+    do: "Rien à faire de spécial — profite juste de l'histoire qui se construit au fil des saisons." },
+];
+// Bulle d'aide au tap — fonctionne au clic comme au toucher (pas de survol souris nécessaire),
+// essentiel sur mobile où le hover n'existe pas.
+const InfoTip = ({ term }) => {
+  const [open, setOpen] = useState(false);
+  const g = GLOSSARY[term];
+  if (!g) return null;
+  return (
+    <span style={{ position: "relative", display: "inline-block", marginLeft: 4 }}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        style={{ width: 16, height: 16, borderRadius: "50%", border: `1px solid ${T.inkMuted}`, background: "transparent", color: T.inkMuted, fontSize: 10, lineHeight: 1, cursor: "pointer", padding: 0, verticalAlign: "middle" }}
+        aria-label={`Explication : ${g.title}`}
+      >?</button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+          <div style={{ position: "absolute", zIndex: 41, top: "120%", left: 0, width: 220, background: T.panel, border: `1px solid ${T.accent}`, borderRadius: 8, padding: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.4)", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+            <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 13, color: T.accent, marginBottom: 4 }}>{g.title}</div>
+            <div style={{ fontSize: 12, color: T.ink, lineHeight: 1.4 }}>{g.text}</div>
+          </div>
+        </>
+      )}
+    </span>
+  );
+};
 const TabButton = ({ active, onClick, children }) => (
   <button onClick={onClick} style={{ background: active ? T.accent : T.panelAlt, color: active ? "#171614" : T.ink, border: `1px solid ${active ? T.accent : T.line}`, padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>{children}</button>
 );
@@ -2923,7 +3322,7 @@ class ProCyclingLifeErrorBoundary extends React.Component {
         <div style={{ background: "#121110", color: "#f5f0e8", minHeight: 400, padding: 24, borderRadius: 12, fontFamily: "Inter, sans-serif", textAlign: "center" }}>
           <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 20, marginBottom: 8 }}>🚧 Un imprévu a interrompu la course</div>
           <p style={{ color: "#9a9086", fontSize: 14, maxWidth: 480, margin: "0 auto 16px" }}>
-            Le jeu a rencontré une erreur inattendue. Ta progression est normalement sauvegardée automatiquement — recharge la page pour reprendre là où tu en étais.
+            Le jeu a rencontré une erreur inattendue. Ta carrière est sauvegardée automatiquement — recharge la page pour reprendre ta carrière. La course en cours sera annulée si elle n'était pas terminée.
             Si le souci persiste, note ce que tu faisais juste avant (quel écran, quelle action) et transmets-le, ça aide énormément à corriger le bug.
           </p>
           <button onClick={() => window.location.reload()} style={{ background: "#c65d3b", color: "#171614", border: "none", padding: "10px 20px", borderRadius: 6, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>
@@ -2952,7 +3351,7 @@ export default function ProCyclingLifeApp() {
 // incompatible après une mise à jour du jeu (on efface simplement plutôt que de risquer un état corrompu).
 const SAVE_KEY = "pro_cycling_life_save_v1";
 function saveGameToStorage(game) {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ game, savedAt: Date.now() })); } catch (e) { /* stockage plein ou indisponible : on continue sans sauvegarder */ }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ game, savedAt: Date.now() })); return true; } catch (e) { return false; }
 }
 function loadGameFromStorage() {
   try {
@@ -2972,15 +3371,15 @@ function clearSavedGame() {
 const ACHIEVEMENTS_KEY = "pro_cycling_life_achievements_v1";
 const ACHIEVEMENTS = [
   { id: "monument", icon: "🏆", label: "Vainqueur d'un Monument", desc: "Gagner l'une des 5 classiques Monuments.",
-    check: (p) => p.palmares.some((pm) => /^(Victoire|Classement général)/.test(pm.label) && [...MONUMENTS].some((m) => pm.label.includes(m))) },
+    check: (p) => p.palmares.some((pm) => pm.resultType === "victoire" && pm.isMonument) },
   { id: "worlds", icon: "🌈", label: "Champion du monde", desc: "Remporter les Championnats du Monde.",
-    check: (p) => p.palmares.some((pm) => pm.label.includes("Championnats du Monde") && pm.label.startsWith("Victoire")) },
+    check: (p) => p.palmares.some((pm) => pm.isWorlds && pm.resultType === "victoire") },
   { id: "gt_winner", icon: "👑", label: "Vainqueur d'un Grand Tour", desc: "Remporter le classement général du Tour de France, du Giro ou de la Vuelta.",
-    check: (p) => p.palmares.some((pm) => /^(Victoire|Classement général)/.test(pm.label) && /Tour de France|Giro d'Italia|Vuelta a España/.test(pm.label)) },
+    check: (p) => p.palmares.some((pm) => pm.resultType === "victoire" && pm.isGrandTour) },
   { id: "jersey", icon: "🎽", label: "Collectionneur de maillots", desc: "Remporter un maillot secondaire (points, montagne ou jeune) sur une course à étapes.",
-    check: (p) => p.palmares.some((pm) => pm.label.startsWith("Maillot")) },
+    check: (p) => p.palmares.some((pm) => pm.resultType === "maillot") },
   { id: "no_gt_career", icon: "🚵", label: "Une carrière sans Grand Tour", desc: "Terminer une carrière avec au moins une victoire, sans jamais avoir couru le moindre Grand Tour.",
-    check: (p) => p.palmares.length > 0 && !p.palmares.some((pm) => /Tour de France|Giro d'Italia|Vuelta a España/.test(pm.label)) },
+    check: (p) => p.palmares.length > 0 && !p.palmares.some((pm) => pm.isGrandTour) },
   { id: "longevity", icon: "⭐", label: "Longévité", desc: "Jouer au moins 15 saisons professionnelles.",
     check: (p) => (p.seasonNumber || 0) >= 15 },
   { id: "elite", icon: "🎖️", label: "Élite mondiale", desc: "Terminer ta carrière avec un niveau actuel de 85 ou plus.",
@@ -2991,8 +3390,11 @@ const ACHIEVEMENTS = [
     check: (p) => (p.money || 0) >= 300000 },
   { id: "fairplay", icon: "🎗️", label: "Fair-play exemplaire", desc: "Terminer ta carrière avec une éthique de 90 ou plus.",
     check: (p) => p.stats.ethique >= 90 },
+  // hadMajorInjury est un marqueur PERMANENT d'historique de carrière (posé une fois par les incidents
+  // de chute grave, jamais réinitialisé ensuite) — volontairement, pour que ce succès reste accessible
+  // même après une longue et belle fin de carrière, des saisons après la blessure elle-même.
   { id: "comeback", icon: "🩹", label: "Renaissance", desc: "Revenir d'une blessure grave en carrière pro et tout de même construire une belle carrière.",
-    check: (p) => p.flags?.recentInjury && (computeCareerScore(p) || 0) >= 40 },
+    check: (p) => p.flags?.hadMajorInjury && (computeCareerScore(p) || 0) >= 40 },
 ];
 function loadAchievements() {
   try { const raw = localStorage.getItem(ACHIEVEMENTS_KEY); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
@@ -3029,6 +3431,7 @@ function ProCyclingLife() {
   const [skillSubTab, setSkillSubTab] = useState("physique");
   const [unlockCelebration, setUnlockCelebration] = useState(null); // { skill } — écran de célébration au déblocage
   const [restoredNotice, setRestoredNotice] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null); // 'ok' | 'error' | null (pas encore de sauvegarde tentée)
   const [epilogueChoice, setEpilogueChoice] = useState(null);
   const [newAchievements, setNewAchievements] = useState([]);
   const [achievementsEvaluated, setAchievementsEvaluated] = useState(false);
@@ -3061,8 +3464,10 @@ function ProCyclingLife() {
   }, []);
 
   // Sauvegarde automatique à chaque changement de l'état du joueur — pas besoin d'action manuelle.
+  // Le résultat réel est suivi (saveStatus), pour ne jamais laisser croire à une sauvegarde réussie
+  // quand localStorage est plein ou indisponible (navigation privée, quota dépassé...).
   useEffect(() => {
-    if (game) saveGameToStorage(game);
+    if (game) setSaveStatus(saveGameToStorage(game) ? "ok" : "error");
   }, [game]);
 
   // Succès méta : évalués une seule fois à l'arrivée sur l'écran de fin, jamais pour une carrière
@@ -3186,7 +3591,10 @@ function ProCyclingLife() {
       // La fatigue chronique ne se vide vraiment qu'ici — 55% de coupure hivernale, jamais 100% :
       // une trace de la charge des saisons précédentes persiste, comme dans une vraie carrière.
       const chronicRelief = Math.round(g.player.stats.fatigueChronique * 0.3) + Math.round(skillRecovery * 0.5);
-      const formeBoost = Math.max(8, Math.round((75 - g.player.stats.forme) * 0.35)) + trainingQualityBonus + skillRecovery;
+      // Club rural : une résilience qui se voit surtout dans les coups durs — un vrai rebond
+      // supplémentaire à l'intersaison, mais seulement si la saison a été difficile (forme basse).
+      const ruralResilienceBonus = (g.player.flags?.originRural && g.player.stats.forme < 45) ? 7 : 0;
+      const formeBoost = Math.max(8, Math.round((75 - g.player.stats.forme) * 0.35)) + trainingQualityBonus + skillRecovery + ruralResilienceBonus;
       g = applyDelta(g, { fatigue: -offSeasonFatigueRelief, forme: formeBoost, fatigueChronique: -chronicRelief });
       // Mental d'acier : la charge "ignore une baisse de motivation" se recharge à chaque nouvelle saison.
       if (SkillEngine.hasSkill(g.player, "talent_acier")) {
@@ -3215,7 +3623,7 @@ function ProCyclingLife() {
       // passer (nouvelles entrées de palmarès, points UCI accumulés). Un vrai bonus aléatoire si atteints,
       // et le DS qui commence à s'agacer après plusieurs saisons consécutives d'échec total.
       if (g.seasonObjectives && g.seasonObjectives.length > 0) {
-        const newPalmares = g.player.palmares.slice(g.seasonStartPalmaresCount || 0).map((p) => p.label);
+        const newPalmares = g.player.palmares.slice(g.seasonStartPalmaresCount || 0);
         const ctx = { newPalmares, uciPointsThisSeason: g.player.uciPoints || 0, player: g.player, wasWTAtSeasonStart: g.wasWTAtSeasonStart };
         const met = g.seasonObjectives.filter((id) => evaluateSeasonObjective(id, ctx));
         const missed = g.seasonObjectives.filter((id) => !met.includes(id));
@@ -3404,6 +3812,9 @@ function ProCyclingLife() {
               🏅 Succès ({Object.keys(loadAchievements()).length}/{ACHIEVEMENTS.length})
             </ChoiceButton>
           </div>
+          <div style={{ marginTop: 10 }}>
+            <ChoiceButton onClick={() => setScreen("guide")}>❓ Guide — Comment jouer</ChoiceButton>
+          </div>
         </div>
       </div>
     );
@@ -3437,6 +3848,33 @@ function ProCyclingLife() {
         })}
         <div style={{ marginTop: 16 }}>
           <ChoiceButton primary onClick={() => setScreen("home")}>← Retour à l'accueil</ChoiceButton>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------------- GUIDE ---------------- */
+  if (screen === "guide") {
+    return (
+      <div style={{ background: T.bg, minHeight: 520, color: T.ink, fontFamily: "Inter, sans-serif", padding: 24, borderRadius: 12 }}>
+        <style>{FONT_IMPORT}</style>
+        <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 13, letterSpacing: 3, color: T.accent, textTransform: "uppercase", marginBottom: 4 }}>Aide</div>
+        <h1 style={{ fontFamily: "Oswald, sans-serif", fontSize: 26, margin: "0 0 4px 0" }}>Comment jouer</h1>
+        <p style={{ color: T.inkMuted, fontSize: 13, marginBottom: 16 }}>
+          Les bases, en quelques lignes par sujet. Tu trouveras aussi des <b>?</b> cliquables un peu partout dans le jeu pour des explications ponctuelles.
+        </p>
+        {GUIDE_SECTIONS.map((s) => (
+          <Card key={s.title} style={{ marginBottom: 10 }}>
+            <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 15, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 20 }}>{s.icon}</span>{s.title}
+            </div>
+            <div style={{ fontSize: 12, marginBottom: 6 }}><b style={{ color: T.accent }}>C'est quoi ?</b> <span style={{ color: T.inkMuted }}>{s.what}</span></div>
+            <div style={{ fontSize: 12, marginBottom: 6 }}><b style={{ color: T.accent }}>À quoi ça sert ?</b> <span style={{ color: T.inkMuted }}>{s.why}</span></div>
+            <div style={{ fontSize: 12 }}><b style={{ color: T.accent }}>Qu'est-ce que je dois faire ?</b> <span style={{ color: T.inkMuted }}>{s.do}</span></div>
+          </Card>
+        ))}
+        <div style={{ marginTop: 16 }}>
+          <ChoiceButton primary onClick={() => setScreen(game ? "play" : "home")}>← Retour</ChoiceButton>
         </div>
       </div>
     );
@@ -3516,7 +3954,11 @@ function ProCyclingLife() {
     const prepPool = eligibleFor(SUMMER_PREP_RACES, player);
     const autumnPool = eligibleFor(AUTUMN_CLASSICS, player);
     const grandTours = ["Tour de France", "Giro d'Italia", "Vuelta a España"];
-    const MAX_CLASSICS = 4;
+    // 7 permet d'enchaîner l'intégralité des flandriennes (Omloop, San Remo, Flandres, Roubaix) ET des
+    // ardennaises (Amstel, Flèche, Liège) dans la même saison — une vraie campagne de classicman, comme
+    // dans la réalité. La fatigue, moins punitive depuis les derniers ajustements (récupération nocturne,
+    // seuils recalibrés), supporte largement ce volume.
+    const MAX_CLASSICS = 7;
 
     // Le DS explique la stratégie de saison selon ton profil — chaque profil a des alternatives crédibles,
     // même quand certaines courses (pavés, classiques ardennaises...) ne lui sont pas adaptées.
@@ -3547,6 +3989,31 @@ function ProCyclingLife() {
         if (p.objectives.length >= 5) return p;
         return { ...p, objectives: [...p.objectives, id] };
       });
+    }
+
+    // Préréglages du DS — pour les joueurs qui ne savent pas par où commencer, le DS propose directement
+    // un calendrier cohérent avec un objectif de saison. Pioche exclusivement dans les pools déjà filtrés
+    // par éligibilité (earlyPool/classicsPool/prepPool/autumnPool) : jamais une course hors de portée du
+    // profil du joueur. Le joueur reste libre d'ajuster ensuite — un point de départ, pas une contrainte.
+    function findRace(pool, name) { return pool.find((r) => r.name === name) || null; }
+    const DS_PRESETS = [
+      { id: "paves", icon: "🪨", label: "Courir les classiques pavées",
+        build: () => ({ early: null, classics: ["Omloop Het Nieuwsblad", "Milan-San Remo", "Tour des Flandres", "Paris-Roubaix"].map((n) => findRace(classicsPool, n)).filter(Boolean), prep: null, autumn: null, grandTour: null, objectives: ["monument"] }) },
+      { id: "ardennaises", icon: "⛰️", label: "Courir les classiques ardennaises",
+        build: () => ({ early: null, classics: ["Amstel Gold Race", "Flèche Wallonne", "Liège-Bastogne-Liège"].map((n) => findRace(classicsPool, n)).filter(Boolean), prep: null, autumn: null, grandTour: null, objectives: ["monument"] }) },
+      { id: "sprint", icon: "💨", label: "Enchaîner les sprints massifs",
+        build: () => ({ early: findRace(earlyPool, "Tour Down Under") || findRace(earlyPool, "UAE Tour"), classics: ["Scheldeprijs", "Danilith Nokere Koerse", "Grand Prix de Denain"].map((n) => findRace(classicsPool, n)).filter(Boolean), prep: null, autumn: findRace(autumnPool, "Paris-Tours"), grandTour: null, objectives: ["anywin"] }) },
+      { id: "tdf", icon: "🏆", label: "Viser le Tour de France",
+        build: () => ({ early: null, classics: [], prep: findRace(prepPool, "Critérium du Dauphiné") || findRace(prepPool, "Tour de Suisse"), autumn: null, grandTour: "Tour de France", objectives: ["gc"] }) },
+      { id: "giro", icon: "🇮🇹", label: "Viser le Giro d'Italia",
+        build: () => ({ early: findRace(earlyPool, "UAE Tour"), classics: [findRace(classicsPool, "Tirreno-Adriatico") || findRace(classicsPool, "Paris-Nice")].filter(Boolean), prep: null, autumn: null, grandTour: "Giro d'Italia", objectives: ["gc"] }) },
+      { id: "vuelta", icon: "🇪🇸", label: "Viser la Vuelta a España",
+        build: () => ({ early: null, classics: [], prep: findRace(prepPool, "Tour de Suisse") || findRace(prepPool, "Critérium du Dauphiné"), autumn: null, grandTour: "Vuelta a España", objectives: ["gc"] }) },
+      { id: "leger", icon: "🌱", label: "Une première saison en douceur",
+        build: () => ({ early: null, classics: classicsPool.slice(0, 2), prep: null, autumn: null, grandTour: null, objectives: [] }) },
+    ];
+    function applyPreset(preset) {
+      setPlanning((p) => ({ ...p, ...preset.build() }));
     }
     const TIER_BADGE = { WT: { label: "WorldTour", color: T.accent }, Pro: { label: "ProSeries", color: T.info }, Europe: { label: "Europe Tour", color: T.inkMuted } };
     const TierTag = ({ tier }) => { const t = TIER_BADGE[tier]; return t ? <span style={{ fontSize: 10, color: t.color, border: `1px solid ${t.color}`, borderRadius: 4, padding: "1px 5px", marginLeft: 6 }}>{t.label}</span> : null; };
@@ -3643,6 +4110,18 @@ function ProCyclingLife() {
               </ChoiceButton>
             </div>
           )}
+        </Card>
+
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 15, marginBottom: 4 }}>🧭 Pas sûr par où commencer ?</div>
+          <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>
+            Dis au DS ce que tu veux viser cette saison — il propose un calendrier cohérent, que tu peux ensuite ajuster librement ci-dessous.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {DS_PRESETS.map((preset) => (
+              <ChoiceButton key={preset.id} onClick={() => applyPreset(preset)}>{preset.icon} {preset.label}</ChoiceButton>
+            ))}
+          </div>
         </Card>
 
         {(player.stats.fatigueChronique >= 32) && (
@@ -3880,10 +4359,10 @@ function ProCyclingLife() {
         </h1>
         {seasonLog.map((l, i) => (<div key={i} style={{ fontSize: 13, color: T.inkMuted, padding: "6px 0", borderBottom: `1px solid ${T.line}` }}>{l}</div>))}
         <div style={{ marginTop: 16, marginBottom: 16 }}>
-          <Bar label="Forme" value={player.stats.forme} color={T.accent2} />
-          <Bar label="Fatigue" value={player.stats.fatigue} color={T.danger} />
-          <Bar label="Réputation peloton" value={player.reputation.peloton} color={T.accent} />
-          <Bar label="Relation équipe" value={player.stats.relationEquipe} color={T.info} />
+          <Bar label="Forme" value={player.stats.forme} color={T.accent2} term="forme" />
+          <Bar label="Fatigue" value={player.stats.fatigue} color={T.danger} term="fatigue" />
+          <Bar label="Réputation peloton" value={player.reputation.peloton} color={T.accent} term="reputationPeloton" />
+          <Bar label="Relation équipe" value={player.stats.relationEquipe} color={T.info} term="relationEquipe" />
         </div>
         {player.retired ? (
           <ChoiceButton primary onClick={() => setScreen("end")}>Voir le bilan de carrière</ChoiceButton>
@@ -3948,6 +4427,12 @@ function ProCyclingLife() {
     <div style={{ background: T.bg, minHeight: 620, color: T.ink, fontFamily: "Inter, sans-serif", padding: 20, borderRadius: 12 }}>
       <style>{FONT_IMPORT}</style>
 
+      {saveStatus && (
+        <div style={{ textAlign: "right", fontSize: 10, color: saveStatus === "ok" ? T.inkMuted : T.danger, marginBottom: 4 }}>
+          {saveStatus === "ok" ? "💾 Sauvegarde OK" : "⚠️ Sauvegarde indisponible — ta progression ne sera pas conservée si tu quittes"}
+        </div>
+      )}
+
       {/* STATUS BAR */}
       <div style={{ display: "grid", gridTemplateColumns: player.phase === "pro" ? "repeat(4, 1fr)" : "1fr", gap: 10, marginBottom: 16 }}>
         <Card>
@@ -3959,9 +4444,9 @@ function ProCyclingLife() {
               {player.phase === "pro" && <div style={{ fontSize: 11, color: T.inkMuted, marginTop: 2 }}>Titre : <b style={{ color: T.ink }}>{SkillEngine.computeTitle(player)}</b></div>}
             </div>
             {player.phase === "pro" && (() => { const rating = computeCurrentRating(player); return (
-              <div style={{ textAlign: "center", flexShrink: 0, marginLeft: 8 }} title="Niveau actuel du coureur (physique + forme + réputation + résultats récents)">
+              <div style={{ textAlign: "center", flexShrink: 0, marginLeft: 8 }}>
                 <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 24, color: T.accent, lineHeight: 1 }}>{rating}</div>
-                <div style={{ fontSize: 9, color: T.inkMuted, textTransform: "uppercase", letterSpacing: 0.5, maxWidth: 70 }}>{ratingTier(rating)}</div>
+                <div style={{ fontSize: 9, color: T.inkMuted, textTransform: "uppercase", letterSpacing: 0.5, maxWidth: 70 }}>{ratingTier(rating)}<InfoTip term="currentRating" /></div>
               </div>
             ); })()}
           </div>
@@ -3970,11 +4455,12 @@ function ProCyclingLife() {
           <>
             <Card>
               <div style={{ fontSize: 10, color: T.inkMuted, letterSpacing: 1, textTransform: "uppercase" }}>Gestion de saison</div>
-              <div style={{ fontSize: 13, margin: "4px 0" }}>Fraîcheur : <span style={{ color: T.accent2 }}>{computeFraicheur(player)}%</span></div>
-              <div style={{ fontSize: 13, color: T.danger }}>Fatigue récente : {player.stats.fatigue}%</div>
+              <div style={{ fontSize: 13, margin: "4px 0" }}>Fraîcheur<InfoTip term="fraicheur" /> : <span style={{ color: T.accent2 }}>{computeFraicheur(player)}%</span></div>
+              <div style={{ fontSize: 13, color: T.danger }}>Fatigue récente<InfoTip term="fatigue" /> : {player.stats.fatigue}%</div>
               <div style={{ fontSize: 13, color: isOvertrained(player) ? T.danger : T.inkMuted }}>
-                Fatigue chronique : {player.stats.fatigueChronique}% {isOvertrained(player) && "⚠️ surentraînement"}
+                Fatigue chronique<InfoTip term="fatigueChronique" /> : {player.stats.fatigueChronique}% {isOvertrained(player) && "⚠️ surentraînement"}
               </div>
+              <div style={{ fontSize: 13, color: T.inkMuted }}>Motivation<InfoTip term="motivation" /> : {player.stats.motivation}%</div>
             </Card>
             <Card>
               <div style={{ fontSize: 10, color: T.inkMuted, letterSpacing: 1, textTransform: "uppercase" }}>Rival principal</div>
@@ -4001,6 +4487,26 @@ function ProCyclingLife() {
           <TabButton active={view === "uci"} onClick={() => setView("uci")}>🏆 Classement UCI</TabButton>
           <TabButton active={view === "palmares"} onClick={() => setView("palmares")}>🏛️ Palmarès</TabButton>
           <TabButton active={view === "history"} onClick={() => setView("history")}>📜 Journal</TabButton>
+          <TabButton active={view === "guide"} onClick={() => setView("guide")}>❓ Guide</TabButton>
+        </div>
+      )}
+
+      {/* GUIDE VIEW */}
+      {view === "guide" && player.phase === "pro" && (
+        <div>
+          <p style={{ color: T.inkMuted, fontSize: 13, marginBottom: 12 }}>
+            Les bases, en quelques lignes par sujet. Tu trouveras aussi des <b>?</b> cliquables un peu partout dans le jeu pour des explications ponctuelles.
+          </p>
+          {GUIDE_SECTIONS.map((s) => (
+            <Card key={s.title} style={{ marginBottom: 10 }}>
+              <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 15, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 20 }}>{s.icon}</span>{s.title}
+              </div>
+              <div style={{ fontSize: 12, marginBottom: 6 }}><b style={{ color: T.accent }}>C'est quoi ?</b> <span style={{ color: T.inkMuted }}>{s.what}</span></div>
+              <div style={{ fontSize: 12, marginBottom: 6 }}><b style={{ color: T.accent }}>À quoi ça sert ?</b> <span style={{ color: T.inkMuted }}>{s.why}</span></div>
+              <div style={{ fontSize: 12 }}><b style={{ color: T.accent }}>Qu'est-ce que je dois faire ?</b> <span style={{ color: T.inkMuted }}>{s.do}</span></div>
+            </Card>
+          ))}
         </div>
       )}
 
@@ -4019,10 +4525,13 @@ function ProCyclingLife() {
         let list = [];
         let listDesc = "";
         let treeIdForMastery = null;
-        if (skillSubTab === "specialisation") { list = SKILL_TREE_CONFIG.specialisation[player.specialtyPrimary] || []; listDesc = "Propre à ton profil de départ — inaccessible aux autres spécialités."; treeIdForMastery = player.specialtyPrimary; }
+        // Chaque compétence doit porter category/treeId pour que SkillEngine.baseSkillsProgress puisse
+        // déterminer si elle est verrouillée par le palier — exactement ce que fait déjà SkillEngine.catalog()
+        // en interne. Sans ce tag, les compétences avancées (tier 2) ne s'affichaient jamais grisées.
+        if (skillSubTab === "specialisation") { list = (SKILL_TREE_CONFIG.specialisation[player.specialtyPrimary] || []).map((s) => ({ ...s, category: "specialisation", treeId: player.specialtyPrimary })); listDesc = "Propre à ton profil de départ — inaccessible aux autres spécialités."; treeIdForMastery = player.specialtyPrimary; }
         else if (skillSubTab === "talents") { list = [...SKILL_TREE_CONFIG.talents, ...SKILL_TREE_CONFIG.transversal]; listDesc = "Pas de simple bonus de stat : un vrai effet de gameplay, limité ou contextuel."; }
         else if (skillSubTab === "philosophies") { list = SKILL_TREE_CONFIG.philosophies; listDesc = "Embranchements exclusifs : débloquer l'un ferme définitivement l'autre de la même paire."; }
-        else { list = SKILL_TREE_CONFIG.trees[skillSubTab]?.skills || []; listDesc = SKILL_TREE_CONFIG.trees[skillSubTab]?.desc || ""; treeIdForMastery = skillSubTab; }
+        else { list = (SKILL_TREE_CONFIG.trees[skillSubTab]?.skills || []).map((s) => ({ ...s, category: "tree", treeId: skillSubTab })); listDesc = SKILL_TREE_CONFIG.trees[skillSubTab]?.desc || ""; treeIdForMastery = skillSubTab; }
 
         const mastery = treeIdForMastery ? SkillEngine.getMasteryLevel(player, treeIdForMastery) : null;
         // Regroupement visuel par palier : les compétences avancées (tier 2) au-dessus, reliées
@@ -4083,6 +4592,21 @@ function ProCyclingLife() {
                 )}
               </div>
             </div>
+
+            <Card style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 10, color: T.inkMuted, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Spécialités<InfoTip term="specialty" /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
+                {[["Montagne", player.specialties.montagne], ["Sprint", player.specialties.sprint], ["CLM", player.specialties.clm], ["Pavés", player.specialties.pave]].map(([label, val]) => (
+                  <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 12, width: 60, flexShrink: 0 }}>{label}</span>
+                    <div style={{ flex: 1, height: 5, background: T.line, borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ width: `${clamp(val)}%`, height: "100%", background: T.accent }} />
+                    </div>
+                    <span style={{ fontSize: 11, color: T.inkMuted, width: 24, textAlign: "right" }}>{Math.round(val)}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
 
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
               {SUB_TABS.map((t) => (
@@ -4304,7 +4828,7 @@ function ProCyclingLife() {
               <div style={{ fontSize: 11, letterSpacing: 1, color: T.accent, textTransform: "uppercase", marginBottom: 10 }}>{BLOCK_LABEL[current.data.block]}</div>
               {!pendingResult ? (
                 <>
-                  <p style={{ margin: "0 0 16px 0", lineHeight: 1.5 }}>{current.data.text}</p>
+                  <p style={{ margin: "0 0 16px 0", lineHeight: 1.5 }}>{typeof current.data.text === "function" ? current.data.text(game) : current.data.text}</p>
                   {(typeof current.data.choices === "function" ? current.data.choices(game) : current.data.choices).map((c, i) => (<ChoiceButton key={i} onClick={() => handleEventChoice(c)}>{c.label}</ChoiceButton>))}
                 </>
               ) : (
@@ -4318,18 +4842,28 @@ function ProCyclingLife() {
 
           {current.type === "race" && (
             <>
+              {current.data.isGrandTour && game.currentGT && (
+                <div style={{ background: "rgba(198,93,59,0.12)", border: `1px solid ${T.accent}`, borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                  <span style={{ fontWeight: 700, color: T.accent }}>🏆 {game.currentGT.tourName}</span>
+                  <span style={{ color: T.inkMuted }}>
+                    Général virtuel<InfoTip term="gcVirtuel" /> : <b style={{ color: T.ink }}>{{ victoire: "En tête", podium: "Sur le podium", top10: "Dans le top 10", anonyme: "Hors des places d'honneur" }[gtFinalTier(game.currentGT.gcScore, { victoire: 150, podium: 95, top10: 45 })]}</b>
+                    {game.currentGT.komScore >= 30 && " · en forme pour le maillot à pois"}
+                    {game.currentGT.pointsScore >= 30 && " · bien placé au classement par points"}
+                  </span>
+                </div>
+              )}
               <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 18, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 {current.data.name}
                 {current.data.weather && <span style={{ fontSize: 11, color: T.inkMuted, border: `1px solid ${T.line}`, borderRadius: 4, padding: "2px 6px", fontFamily: "Inter, sans-serif", fontWeight: 600 }}>{current.data.weather}</span>}
                 {game.raceState && (
                   <span style={{ fontSize: 11, color: game.raceState.group === RACE_GROUPS.FRONT ? T.accent : game.raceState.group === RACE_GROUPS.DROPPED ? T.danger : T.info, border: `1px solid currentColor`, borderRadius: 4, padding: "2px 6px", fontFamily: "Inter, sans-serif", fontWeight: 600 }}>
-                    📍 {game.raceState.group} · ⚡ {game.raceState.energy}%
+                    📍 {game.raceState.group}<InfoTip term="raceGroup" /> · ⚡ {game.raceState.energy}%<InfoTip term="raceEnergy" />
                   </span>
                 )}
                 {(() => {
                   const p = computePressure(game, current.data.name);
                   if (p < 55) return null;
-                  return <span style={{ fontSize: 11, color: T.danger, border: `1px solid ${T.danger}`, borderRadius: 4, padding: "2px 6px", fontFamily: "Inter, sans-serif", fontWeight: 600 }}>🔥 Pression {pressureTier(p)}</span>;
+                  return <span style={{ fontSize: 11, color: T.danger, border: `1px solid ${T.danger}`, borderRadius: 4, padding: "2px 6px", fontFamily: "Inter, sans-serif", fontWeight: 600 }}>🔥 Pression {pressureTier(p)}<InfoTip term="pressure" /></span>;
                 })()}
               </div>
               {!pendingResult ? (
