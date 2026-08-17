@@ -3285,7 +3285,9 @@ const INCIDENT_POOL = [
     condition: (ctx) => (ctx.meta.cobbles || 0) > 20 || ctx.weather === WEATHER.PLUIE,
     text: (ctx) => "Crevaison au pire moment, en pleine bataille pour la position !",
     choices: (ctx) => {
-      const teammate = ctx.game.teammates?.[0];
+      // Un coéquipier de trade-team n'a logiquement rien à faire au Championnat national, disputé entre
+      // compatriotes — la course continue, mais sans lui.
+      const teammate = ctx.raceObj?.raceTier === "National" ? null : ctx.game.teammates?.[0];
       const list = [
         { label: "Attendre la voiture technique, seul", resolve: () => ({ text: "Tu perds un temps précieux, seul face à la malchance.", delta: { fatigue: 3, tacticalBonus: -4 } }) },
         teammate
@@ -4038,9 +4040,13 @@ const SKILL_MOMENT_BUILDERS = {
 function buildSkillMomentStage(game, raceObj, kmDone, kmRemaining) {
   const player = game.player;
   const archetypes = raceObj.archetypes || [];
+  const isNationalChamps = raceObj.raceTier === "National";
   const candidates = Object.keys(SKILL_MOMENT_BUILDERS).filter((key) => {
     if (!SkillEngine.hasUnlockedChoice(player, key)) return false;
-    if (key === "suivre_rival" && !getRival(game)) return false;
+    // Le Championnat national se dispute entre compatriotes — un équipier de club (n'importe quelle
+    // nationalité) n'a logiquement rien à faire ici, pas plus qu'un rival d'une autre nation.
+    if (key === "demander_relais" && isNationalChamps) return false;
+    if (key === "suivre_rival" && (!getRival(game) || (isNationalChamps && getRival(game).nation !== player.nation?.code))) return false;
     if (key === "attendre_dernier_col" && (player.flags?.savedForFinalClimb || !archetypes.includes("montagne"))) return false;
     return true;
   });
@@ -4138,8 +4144,10 @@ const RARE_EVENTS = [
       ],
     }) },
   { id: "crevaison", chance: 0.03,
-    build: (game, raceName, kmDone, kmRemaining) => {
-      const teammate = (game.teammates || [])[0];
+    build: (game, raceName, kmDone, kmRemaining, raceObj) => {
+      // Un coéquipier de trade-team n'a logiquement rien à faire au Championnat national, disputé entre
+      // compatriotes — la course continue, mais sans lui.
+      const teammate = raceObj?.raceTier === "National" ? null : (game.teammates || [])[0];
       return {
         phase: `KM ${kmDone} — 🔧 Crevaison`,
         text: `Ta roue se dérobe soudainement — crevaison, au pire moment. Le peloton continue sans toi pendant que la voiture technique approche. (${kmRemaining} km à parcourir)`,
@@ -4179,7 +4187,7 @@ const RARE_EVENTS = [
         { label: "Rester prudent, laisser la course se calmer", resolve: () => ({ text: "Tu restes prudent, laissant les autres prendre les risques dans ces nouvelles conditions.", delta: { fatigue: 1, tacticalBonus: -1 } }) },
       ],
     }) },
-  { id: "equipier_exceptionnel", chance: 0.03, condition: (game) => (game.teammates || []).length > 0,
+  { id: "equipier_exceptionnel", chance: 0.03, condition: (game, raceObj) => (game.teammates || []).length > 0 && raceObj?.raceTier !== "National",
     build: (game, raceName, kmDone, kmRemaining) => {
       const helper = [...(game.teammates || [])].sort((a, b) => b.level - a.level)[0];
       return {
@@ -4228,7 +4236,7 @@ function rollRareEvent(game, raceObj) {
   const archetypes = raceObj?.archetypes || [];
   const shuffled = [...RARE_EVENTS].sort(() => Math.random() - 0.5);
   for (const ev of shuffled) {
-    if (ev.condition && !ev.condition(game)) continue;
+    if (ev.condition && !ev.condition(game, raceObj)) continue;
     const effectiveChance = clamp01(ev.chance * archetypeModifierFor(ev.id, archetypes), 0, 1);
     if (Math.random() < effectiveChance) return ev;
   }
@@ -4299,8 +4307,11 @@ function buildRaceMomentsSequence(raceObj, game, weather) {
   pool = applyStrategyWeights(pool, game.raceState?.strategy);
 
   const totalKm = estimateRaceDistanceKm(raceObj);
-  const rival = getRival(game);
-  const hasFreshHelper = (game.teammates || []).some((tm) => (tm.fraicheur ?? 100) >= 25);
+  // Le Championnat national se dispute entre compatriotes — les coéquipiers de club (qui peuvent être de
+  // n'importe quelle nationalité) et un rival d'une autre nation n'ont logiquement rien à faire ici.
+  const isNationalChamps = raceObj.raceTier === "National";
+  const rival = isNationalChamps ? (getRival(game)?.nation === game.player.nation?.code ? getRival(game) : null) : getRival(game);
+  const hasFreshHelper = !isNationalChamps && (game.teammates || []).some((tm) => (tm.fraicheur ?? 100) >= 25);
   // Au plus une scène spéciale par course — rivalité, équipier et compétence débloquée ne se cumulent
   // jamais dans le même moment.
   // Le moment de compétence est un vrai "joker" — il ne se présente que si le joueur entre dans cette
@@ -4346,7 +4357,7 @@ function buildRaceMomentsSequence(raceObj, game, weather) {
   const rareEvent = rollRareEvent(game, raceObj);
   if (rareEvent) {
     const kmDone = Math.round(totalKm * (0.15 + Math.random() * 0.6));
-    stages.push(rareEvent.build(game, raceObj.name, kmDone, totalKm - kmDone));
+    stages.push(rareEvent.build(game, raceObj.name, kmDone, totalKm - kmDone, raceObj));
   }
   // Les scènes ont pu être ajoutées dans un ordre différent de leur position réelle sur la course
   // (spéciale toujours en dernier, rare à un point aléatoire) — un tri final garantit un kilométrage
@@ -4405,8 +4416,9 @@ function computeRaceRole(game, raceObj) {
   const playerStanding = player.reputation.peloton + (fits ? 15 : -10) + (player.stats.forme - 50) * 0.3 - player.stats.fatigueChronique * 0.15 + (player.stats.relationEquipe - 50) * 0.25 + (player.flags?.leadershipGuarantee ? 25 : 0);
 
   // Vraie concurrence interne : un équipier en forme, mieux adapté à la course, peut faire hésiter le DS —
-  // même si ta propre réputation suffirait normalement pour être leader.
-  const challenger = player.flags?.leadershipGuarantee ? null : bestChallenger(game, philosophy);
+  // même si ta propre réputation suffirait normalement pour être leader. Sauf au Championnat national,
+  // disputé entre compatriotes : la hiérarchie de l'équipe de club n'y a logiquement aucun sens.
+  const challenger = (player.flags?.leadershipGuarantee || raceObj.raceTier === "National") ? null : bestChallenger(game, philosophy);
   if (challenger && challenger.standing > playerStanding + 8) {
     // Le DS tranche clairement en faveur de l'équipier : tu deviens équipier (ou carte secondaire si tu restes compétitif).
     return { role: playerStanding >= 45 ? RACE_ROLES.CARTE : RACE_ROLES.DOMESTIQUE, challenger, hesitation: false };
@@ -4480,7 +4492,7 @@ function buildBriefingStage(game, raceObj) {
   // Le leader présumé de l'équipe pour cette course — calculé même hors du cas de concurrence interne
   // spécifique, pour qu'un équipier sache toujours concrètement pour QUI il roule aujourd'hui.
   const philosophy = player.team ? TEAM_PHILOSOPHIES[player.team.philosophy] : null;
-  const presumedLeader = (role === RACE_ROLES.DOMESTIQUE || role === RACE_ROLES.CARTE || role === RACE_ROLES.COLEADER) ? (challenger || bestChallenger(game, philosophy)) : null;
+  const presumedLeader = (role === RACE_ROLES.DOMESTIQUE || role === RACE_ROLES.CARTE || role === RACE_ROLES.COLEADER) && raceObj.raceTier !== "National" ? (challenger || bestChallenger(game, philosophy)) : null;
   const objective = raceObjectiveFor(game, raceObj, role, presumedLeader?.name);
   const director = player.team?.director || "Ton DS";
   const philosophyLabel = philosophy?.label;
@@ -6099,13 +6111,16 @@ function ProCyclingLife() {
 
         {(() => {
           // Détection de vrais conflits de calendrier — fondée sur les vraies semaines UCI, pas juste le
-          // mois. Couvre TOUTE la sélection (pas seulement les classiques), et bloque particulièrement les
-          // 3 semaines pleines d'un Grand Tour : impossible de courir autre chose pendant que tu es dessus.
+          // mois. Chaque entrée reçoit un span réaliste : une course d'un jour n'occupe qu'une fraction de
+          // semaine (deux classiques d'un jour, même très proches comme Flèche Wallonne et Liège, ne se
+          // gênent jamais dans le vrai calendrier), une course à étapes environ 1,3 semaine, et un Grand
+          // Tour bloque 3 semaines pleines — impossible de courir autre chose pendant que tu es dessus.
+          const spanFor = (race) => (race?.isStageRace ? 1.3 : 0.15);
           const entries = [];
-          if (planning.early) entries.push({ name: planning.early.name, week: getRaceWeek(planning.early), span: 1 });
-          planning.classics.forEach((r) => entries.push({ name: r.name, week: getRaceWeek(r), span: 1 }));
-          if (planning.prep) entries.push({ name: planning.prep.name, week: getRaceWeek(planning.prep), span: 1 });
-          if (planning.autumn) entries.push({ name: planning.autumn.name, week: getRaceWeek(planning.autumn), span: 1 });
+          if (planning.early) entries.push({ name: planning.early.name, week: getRaceWeek(planning.early), span: spanFor(planning.early) });
+          planning.classics.forEach((r) => entries.push({ name: r.name, week: getRaceWeek(r), span: spanFor(r) }));
+          if (planning.prep) entries.push({ name: planning.prep.name, week: getRaceWeek(planning.prep), span: spanFor(planning.prep) });
+          if (planning.autumn) entries.push({ name: planning.autumn.name, week: getRaceWeek(planning.autumn), span: spanFor(planning.autumn) });
           if (planning.grandTour) entries.push({ name: planning.grandTour, week: GRAND_TOUR_WEEK[planning.grandTour], span: 3 });
           const conflicts = [];
           for (let i = 0; i < entries.length; i++) {
