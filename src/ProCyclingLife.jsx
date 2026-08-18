@@ -1245,6 +1245,15 @@ const SPONSOR_OBJECTIVES = [
   { name: "Aqua Vitale", objective: "Terminer une classique dans le top 10", reward: "Prime de 8 000 € & +réputation sponsors", bonusMoney: 8000 },
   { name: "Groupe Média Sportif", objective: "Décrocher une victoire d'étape", reward: "Prime de 20 000 € & forte exposition médiatique", bonusMoney: 20000 },
 ];
+// Évalue si une entrée de palmarès donnée correspond précisément à l'objectif du sponsor nommé — sans
+// cette vérification, l'objectif affiché au joueur ("⏳ En cours") ne pouvait littéralement jamais passer
+// à "✅ Rempli", quel que soit son résultat : la prime n'était jamais versée, le sponsor ne changeait jamais.
+function sponsorObjectiveMet(sponsorName, entry) {
+  if (sponsorName === "Banque Cycliste Pro") return entry.resultType === "podium" || entry.resultType === "victoire" || entry.resultType === "victoire_etape" || entry.resultType === "victoire_gc";
+  if (sponsorName === "Aqua Vitale") return !entry.isGrandTour && !entry.isWorlds && (entry.resultType === "top10" || entry.resultType === "podium" || entry.resultType === "victoire");
+  if (sponsorName === "Groupe Média Sportif") return entry.resultType === "victoire_etape";
+  return false;
+}
 
 /* ============================== CALENDRIER UCI (calendar.js) ============================== */
 // Reprend exactement le calendrier défini dans calendar.js. Chaque course a :
@@ -1923,6 +1932,14 @@ function applyDelta(game, delta = {}) {
           player.flags.reconversionConfirmed = true;
         }
       }
+      // Objectif sponsor — vérifié sur CHAQUE nouvelle entrée de palmarès, pas seulement à la fin de
+      // saison, pour que la prime tombe au moment même où le joueur vient de la décrocher.
+      if (sponsor && !sponsor.fulfilled && sponsorObjectiveMet(sponsor.name, entry)) {
+        sponsor.fulfilled = true;
+        player.money = (player.money || 0) + (sponsor.bonusMoney || 0);
+        player.reputation.sponsors = clamp((player.reputation.sponsors || 50) + 8);
+        player.history.push(`${player.age} ans — remplit l'objectif fixé par ${sponsor.name} et touche une prime de ${(sponsor.bonusMoney || 0).toLocaleString("fr-FR")} €.`);
+      }
     });
   }
   if (delta.resultTier) {
@@ -2269,13 +2286,29 @@ const EVENTS = [
     text: "Fin août : ton contrat arrive à échéance. Le mercato cycliste s'ouvre.",
     choices: (g) => {
       const level = g.player.team.level;
-      const base = [
-        { label: "Prolonger dans ton équipe actuelle, sans clause particulière", resolve: () => ({ text: "La continuité rassure le staff, sans forcément faire progresser ton salaire.", delta: { relationEquipe: 6, contract: { teamId: g.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: false } } }) },
-        { label: "Rester, mais négocier une clause de sortie facilitée", resolve: () => ({ text: "Tu acceptes de rester, mais t'assures de pouvoir partir plus facilement si une meilleure occasion se présente.", delta: { relationEquipe: 2, contract: { teamId: g.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: true } } }) },
-      ];
+      const rep = g.player.reputation.peloton;
       // Le niveau EFFECTIF d'une équipe (après une éventuelle promotion/relégation en cours de saison)
       // peut différer de son niveau de création — on recalcule donc les pools à la volée.
       const teamsAtLevel = (lvl) => ALL_TEAMS.map((t) => resolveTeam(g, t)).filter((t) => t.level === lvl);
+      // Une équipe ne prolonge pas indéfiniment un coureur dont la réputation s'est trop effondrée — une
+      // vraie conséquence d'un fort déclin, pas juste un décor. Mais JAMAIS de blocage : une équipe de
+      // niveau inférieur reste toujours prête à t'accueillir, à des conditions plus modestes.
+      const currentTeamWantsYou = rep >= 28;
+      const base = [];
+      if (currentTeamWantsYou) {
+        base.push({ label: "Prolonger dans ton équipe actuelle, sans clause particulière", resolve: () => ({ text: "La continuité rassure le staff, sans forcément faire progresser ton salaire.", delta: { relationEquipe: 6, contract: { teamId: g.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: false } } }) });
+        base.push({ label: "Rester, mais négocier une clause de sortie facilitée", resolve: () => ({ text: "Tu acceptes de rester, mais t'assures de pouvoir partir plus facilement si une meilleure occasion se présente.", delta: { relationEquipe: 2, contract: { teamId: g.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: true } } }) });
+      } else {
+        const lowerLevel = level === TEAM_LEVELS.WT ? TEAM_LEVELS.PT : TEAM_LEVELS.CT;
+        const lowerPool = teamsAtLevel(lowerLevel).filter((t) => t.id !== g.player.team.id);
+        const fallbackTeam = lowerPool.length > 0 ? pick(lowerPool) : g.player.team;
+        base.push({ label: `Ton équipe ne te prolonge pas — signer où tu peux (${fallbackTeam.name})`, resolve: () => ({ text: `Ton équipe ne te fait pas de nouvelle offre — ta réputation ne pesait plus assez lourd cette saison. ${fallbackTeam.name} accepte de te prendre, mais à des conditions bien plus modestes.`, delta: { relationEquipe: -3, teamUpgrade: fallbackTeam, contract: { teamId: fallbackTeam.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: true } } }) });
+        base.push({ label: "Tenter de convaincre ton équipe de te garder quand même", resolve: () => {
+            const success = Math.random() < 0.25;
+            if (success) return { text: "Ton insistance et ta connaissance de la maison finissent par payer — le staff te garde, à contrecœur.", delta: { relationEquipe: -2, contract: { teamId: g.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: false } } };
+            return { text: "Malgré tes efforts, la décision est actée — il est temps de repartir ailleurs.", delta: { relationEquipe: -5, teamUpgrade: fallbackTeam, contract: { teamId: fallbackTeam.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: true } } };
+          } });
+      }
       let upgradePool = null, upgradeLabel = "";
       if (level === TEAM_LEVELS.CT && g.player.reputation.peloton >= 40) { upgradePool = teamsAtLevel(TEAM_LEVELS.PT); upgradeLabel = "ProTeam"; }
       else if (level === TEAM_LEVELS.PT && g.player.reputation.peloton >= 60) { upgradePool = teamsAtLevel(TEAM_LEVELS.WT); upgradeLabel = "WorldTour"; }
@@ -2286,7 +2319,20 @@ const EVENTS = [
         base.push({ label: `${bigTeam.name} (${upgradeLabel}) — contrat longue durée (3 ans), rôle d'équipier`, resolve: () => ({ text: `${bigTeam.name} t'offre la sécurité d'un contrat de 3 saisons — en tant qu'équipier au service de leaders déjà installés. Le tremplin idéal vers les Grands Tours, sans garantie de résultats personnels, mais sans avoir à repasser par le mercato avant un moment.`, delta: { reputation: 4, money: 15000, teamUpgrade: bigTeam, contract: { teamId: bigTeam.id, yearsRemaining: 3, winBonusMultiplier: 1, exitClauseFlexible: false } } }) });
         base.push({ label: `${bigTeam.name} (${upgradeLabel}) — prime de victoire élevée, sans garantie de rôle`, resolve: () => ({ text: `${bigTeam.name} te propose un contrat plus court (1 saison), sans garantie de rôle mais avec une prime de victoire nettement plus généreuse — à toi de faire tes preuves.`, delta: { reputation: 3, teamUpgrade: bigTeam, contract: { teamId: bigTeam.id, yearsRemaining: 1, winBonusMultiplier: 1.6, exitClauseFlexible: true } } }) });
         base.push({ label: `${modestTeam.name} — leadership garanti (1 an)`, resolve: () => ({ text: `${modestTeam.name} t'offre moins de prestige, mais un rôle de leader garanti et un calendrier construit autour de toi.`, delta: { reputation: 2, relationEquipe: 5, teamUpgrade: modestTeam, flags: { leadershipGuarantee: true }, contract: { teamId: modestTeam.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: false } } }) });
-      } else {
+        // Un vrai pari de négociation — jamais accessible sans qu'au moins une offre de promotion existe
+        // déjà (il faut un vrai rapport de force pour pouvoir se permettre de tout refuser). Plus la
+        // réputation est haute, plus le pari est sûr, mais un échec ne laisse jamais le joueur sans
+        // équipe : il retombe simplement sur un contrat plus modeste dans son équipe actuelle.
+        base.push({ label: "Décliner toutes ces offres, tenter d'obtenir mieux", resolve: (g2) => {
+            const rep = g2.player.reputation.peloton;
+            const successChance = clamp01(0.3 + (rep - 60) * 0.01, 0.1, 0.75);
+            const success = Math.random() < successChance;
+            if (success) {
+              return { text: `Ton audace paie : ${bigTeam.name} revient avec une offre bien plus généreuse, impressionnée par ta confiance en toi.`, delta: { reputation: 6, money: 10000, teamUpgrade: bigTeam, flags: { leadershipGuarantee: true }, contract: { teamId: bigTeam.id, yearsRemaining: 2, winBonusMultiplier: 1.3, exitClauseFlexible: true } } };
+            }
+            return { text: "Le marché se referme plus vite que prévu — tu dois finalement accepter, dans l'urgence, un contrat plus modeste que prévu dans ton équipe actuelle.", delta: { relationEquipe: -4, reputation: -2, contract: { teamId: g2.player.team.id, yearsRemaining: 1, winBonusMultiplier: 1, exitClauseFlexible: false } } };
+          } });
+      } else if (currentTeamWantsYou) {
         base.push({ label: "Écouter les offres extérieures", resolve: () => ({ text: "Les touches restent discrètes, tu resteras probablement où tu es.", delta: { reputation: 1 } }) });
       }
       return base;
@@ -4865,6 +4911,35 @@ function prestigeScore(player) {
   return player.palmares.reduce((sum, entry) => sum + prestigeValueFor(entry), 0);
 }
 
+// Extrait les vrais jalons narratifs de player.history pour un best-of de fin de carrière — exclut les
+// entrées routinières (déjà affichées séparément dans le palmarès, ou mécaniques et répétitives comme les
+// primes de contrat ou le décompte annuel de points de compétence), qui noieraient sinon les moments qui
+// comptent vraiment (rivalité, réputation, reconversion) sous des dizaines de lignes sans relief.
+const HISTORY_ROUTINE_PATTERNS = [
+  /prime de victoire contractuelle/,
+  /point de compétence bonus/,
+  /termine .* du classement UCI/,
+  /objectifs de saison (atteints|manqués)/,
+  /gagne \d+ points? de compétence pour cette saison/,
+  /effectue un stage en altitude/,
+  /^\d+ ans — signe pour /,
+];
+function careerHighlights(player, max = 7) {
+  const palmaresLabels = new Set((player.palmares || []).map((p) => p.label));
+  const seenText = new Set();
+  const candidates = (player.history || []).filter((entry) => {
+    const afterAge = entry.replace(/^\d+ ans — /, "");
+    if (palmaresLabels.has(afterAge)) return false; // déjà affiché dans le palmarès, pas la peine de le redire
+    if (HISTORY_ROUTINE_PATTERNS.some((re) => re.test(entry))) return false;
+    if (seenText.has(afterAge)) return false; // jamais deux fois le même moment mot pour mot dans un best-of
+    seenText.add(afterAge);
+    return true;
+  });
+  // Les plus récents d'abord — la fin de carrière laisse généralement les souvenirs les plus marquants,
+  // et ça évite de saturer l'écran avec des débuts de carrière depuis longtemps dépassés.
+  return candidates.slice(-max).reverse();
+}
+
 function verdictFor(player) {
   if (player.flags?.careerEndingInjury) return "Carrière brisée avant d'avoir commencé";
   const prestige = prestigeScore(player);
@@ -6292,6 +6367,25 @@ function ProCyclingLife() {
             </div>
           </Card>
         )}
+
+        {(() => {
+          const highlights = careerHighlights(player);
+          if (highlights.length === 0) return null;
+          return (
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ fontFamily: "Oswald, sans-serif", fontSize: 15, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>📖 Les moments qui ont marqué ta carrière</div>
+              {highlights.map((h, i) => {
+                const m = h.match(/^(\d+) ans — (.*)$/);
+                return (
+                  <div key={i} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: i < highlights.length - 1 ? `1px solid ${T.line}` : "none" }}>
+                    <div style={{ fontSize: 12, color: T.accent, fontWeight: 700, minWidth: 44, flexShrink: 0 }}>{m ? `${m[1]} ans` : ""}</div>
+                    <div style={{ fontSize: 13, color: T.inkMuted, lineHeight: 1.4 }}>{m ? m[2] : h}</div>
+                  </div>
+                );
+              })}
+            </Card>
+          );
+        })()}
 
         {player.teamsHistory && player.teamsHistory.length > 0 && (
           <div style={{ marginBottom: 16 }}>
